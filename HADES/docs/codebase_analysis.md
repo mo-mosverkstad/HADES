@@ -2,7 +2,7 @@
 
 ---
 
-## 0. Introduction: What Is HADES? (Big Picture)
+## Phase 0. Introduction: What Is HADES? (Big Picture)
 
 HADES is a software simulator for a hardware board with RISC-V processor. The simulator can be executed on Linux or WSL (using Windows), but behaves as a RISC-V processor executing machine code.
 
@@ -344,7 +344,7 @@ Step-by-step what happens when you run `make cpa`:
 
 The current simulator is a **single-cycle, single-core, no-cache CPU** — the simplest possible architecture that still produces meaningful side-channel leakage.
 
-## 1. Core Concepts of RISC-V and Minimal RISC-V Processor
+## Phase 1. Core Concepts of RISC-V and Minimal RISC-V Processor
 
 RISC-V is an open-standard instruction set architecture. RV32I is the 32-bit integer base:
 - Fixed 32-bit instruction width
@@ -360,4 +360,148 @@ bits [14:12] → funct3 (sub-operation selector)
 bits [19:15] → rs1 (source register 1)
 bits [24:20] → rs2 (source register 2)
 bits [31:25] → funct7 (further differentiation, e.g., ADD vs SUB)
+```
+
+### 1.1 Memory (`src/hardware/memory.h`)
+
+Header-only implementation of a flat 64KB memory space.
+
+**Design decisions**:
+- `std::vector<uint8_t>` backing store (heap-allocated, safe)
+- Address masking `addr & (SIZE - 1)` prevents out-of-bounds (wraps around)
+- Little-endian byte ordering for multi-byte reads/writes
+- No alignment enforcement (simplifies implementation; real RISC-V may trap on misaligned access)
+
+**Key methods**:
+- `read_byte/half/word` — load from memory with appropriate width
+- `write_byte/half/word` — store to memory
+- `load(base, bytes)` — bulk load (used for program/data initialization)
+- `dump(addr, len)` — bulk read (used for observation)
+
+### 1.2 CPU (`src/hardware/cpu.h`, `src/hardware/cpu.cpp`)
+
+The core simulator implementing single-cycle RV32I execution.
+
+**State**:
+- `regs_[32]` — register file (x0 enforced to 0 after every instruction)
+- `pc_` — program counter (initialized to 0x1000)
+- `cycles_` — instruction count (1 cycle per instruction in single-cycle mode)
+- `halted_` — stop flag (set by ECALL)
+
+**Execution loop** (`run()`):
+```
+while not halted and count < max:
+    instr = mem.read_word(pc)
+    execute(instr)
+    cycles++
+```
+
+**Instruction decode** (`execute()`):
+1. Extract opcode (bits [6:0])
+2. Switch on opcode to determine format
+3. Extract remaining fields based on format
+4. Compute result
+5. Write result via `write_reg()` (triggers leakage)
+6. Advance PC (or set PC for branches/jumps)
+
+**Immediate decoding**:
+Each format has a different immediate encoding with sign extension:
+- `imm_i`: bits [31:20], sign-extended from bit 11
+- `imm_s`: bits [31:25] | [11:7], sign-extended from bit 11
+- `imm_b`: bits [31|7|30:25|11:8] << 1, sign-extended from bit 12
+- `imm_u`: bits [31:12] << 12 (no sign extension needed, already 32-bit)
+- `imm_j`: bits [31|19:12|20|30:21] << 1, sign-extended from bit 20
+
+**Critical design choice — `write_reg()`**:
+```cpp
+void CPU::write_reg(uint32_t rd, uint32_t value) {
+    if (rd == 0) return;  // x0 is always 0
+    regs_[rd] = value;
+    leak_.record(value);  // ← LEAKAGE POINT
+}
+```
+Every register write emits a leakage sample. This is the hook that enables all side-channel attacks.
+
+### 1.3 pybind11 Bindings (`src/bridge/bindings.cpp`)
+
+Exposes the C++ engine as a Python module named `hades`.
+
+**Exposed interface**:
+- `hades.CPU()` — constructor
+- `cpu.load_program(bytes, base_addr)` — load code
+- `cpu.load_data(bytes, base_addr)` — load data
+- `cpu.run(max_instructions)` — execute
+- `cpu.reset()` — clear state
+- `cpu.get_power_trace()` → `list[float]`
+- `cpu.get_cycles()` → `int`
+- `cpu.get_pc()` → `int`
+- `cpu.get_reg(idx)` → `int`
+- `cpu.read_mem(addr, len)` → `list[int]`
+- `cpu.set_leakage_model(model)` — HW or HD
+- `cpu.set_noise(stddev)` — noise level
+- `cpu.set_seed(seed)` — RNG seed
+
+**pybind11 features used**:
+- `py::class_<CPU>` — wrap C++ class
+- `py::enum_<LeakageModel>` — wrap enum
+- `pybind11/stl.h` — automatic `std::vector` ↔ Python list conversion
+- `py::arg()` — named arguments with defaults
+
+### 1.4 Build System (`Makefile`)
+
+Two build targets:
+1. **engine**: Compiles C++ sources into `hades.cpython-3XX-x86_64-linux-gnu.so`
+   - Uses `python3 -m pybind11 --includes` for header paths
+   - Uses `python3-config --extension-suffix` for correct output filename
+2. **asm**: Assembles `.S` files to `.bin` via RISC-V cross-compiler
+   - `.S` → `.elf` (gcc with linker script)
+   - `.elf` → `.bin` (objcopy, raw binary)
+
+### 1.5 Linker Script (`src/programs/link.ld`)
+
+Defines memory layout for assembled programs:
+```
+CODE:  0x1000 (12KB) — program instructions
+DATA:  0x0000 (4KB)  — plaintext, keys, S-box, results
+STACK: 0x4000 (4KB)  — stack space
+```
+
+This matches the CPU's initial PC (0x1000) and the memory map defined in study.md.
+
+link.ld is a linker script that acts as the memory-map contract between the RISC-V cross-compiler and the HADES CPU simulator.
+
+What it does:
+
+When you run make asm, the cross-compiler produces a .bin file. The linker script controls where each section ends up in that binary:
+
+| Section | Address | Purpose |
+|---|---|---|
+| .text (code) | 0x1000 | Instructions |
+| .data / .bss | 0x0000 | Variables |
+| Stack | 0x4000 | Stack space |
+
+Why it exists:
+
+The CPU simulator has hardcoded default addresses:
+
+cpp
+cpu.load_program(binary, base_addr=0x1000)  // expects code at 0x1000
+cpu.load_data(data, base_addr=0x0000)       // expects data at 0x0000
+
+
+The linker script ensures the compiled binary matches these expectations. Without it, the toolchain would place code at some default
+address (like 0x10000), and the simulator would execute garbage at 0x1000.
+
+### 1.6 Data Flow
+
+```
+Python script
+    │
+    ├─ load_program(binary)  → copies bytes into mem_[0x1000..]
+    ├─ load_data(data)       → copies bytes into mem_[0x0000..]
+    ├─ run()                 → executes instructions, fills leak_.trace_
+    │
+    ├─ get_power_trace()     → returns leak_.trace_ as Python list
+    ├─ get_reg(i)            → returns regs_[i]
+    └─ read_mem(addr, len)   → returns mem_.dump(addr, len)
 ```

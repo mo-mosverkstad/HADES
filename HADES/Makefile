@@ -15,7 +15,7 @@ SRCS = src/hardware/cpu.cpp src/bridge/bindings.cpp
 ASM_SRCS = $(wildcard src/programs/*.S)
 ASM_BINS = $(ASM_SRCS:.S=.bin)
 
-.PHONY: all clean engine asm test
+.PHONY: all clean engine asm test run run-asm
 
 all: engine asm
 
@@ -40,6 +40,11 @@ test: engine
 
 run: engine asm
 	PYTHONPATH=$(BUILDDIR) python3 src/software/runner.py $(ARGS)
+
+run-asm: engine
+	$(RV_CC) $(RVFLAGS) -o $(FILE:.S=.elf) $(FILE)
+	$(RV_COPY) -O binary $(FILE:.S=.elf) $(FILE:.S=.bin)
+	PYTHONPATH=$(BUILDDIR) python3 src/software/runner.py $(FILE:.S=.bin) --dump-regs
 
 clean:
 	rm -rf $(BUILDDIR) src/programs/*.elf src/programs/*.bin
