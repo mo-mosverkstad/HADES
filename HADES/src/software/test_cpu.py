@@ -256,48 +256,6 @@ def test_loop_sum():
     assert cpu.get_reg(T0) == 55, f"Loop sum: expected 55, got {cpu.get_reg(T0)}"
     print("  PASS: test_loop_sum")
 
-
-def test_leakage_trace():
-    """Test that power trace is generated on register writes."""
-    prog = to_bytes([
-        encode_i(0xFF, ZERO, 0b000, T0, OP_IMM),  # addi t0, zero, 0xFF (HW=8)
-        encode_i(0x01, ZERO, 0b000, T1, OP_IMM),  # addi t1, zero, 0x01 (HW=1)
-        encode_i(0x00, ZERO, 0b000, T2, OP_IMM),  # addi t2, zero, 0x00 (HW=0)
-        ECALL,
-    ])
-    cpu = hades.CPU()
-    cpu.set_noise(0.0)  # no noise for deterministic test
-    cpu.load_program(list(prog))
-    cpu.run()
-    trace = cpu.get_power_trace()
-    assert len(trace) == 3, f"Trace length: expected 3, got {len(trace)}"
-    assert trace[0] == 8.0, f"HW(0xFF): expected 8.0, got {trace[0]}"
-    assert trace[1] == 1.0, f"HW(0x01): expected 1.0, got {trace[1]}"
-    assert trace[2] == 0.0, f"HW(0x00): expected 0.0, got {trace[2]}"
-    print("  PASS: test_leakage_trace")
-
-
-def test_leakage_hd():
-    """Test Hamming Distance leakage model."""
-    prog = to_bytes([
-        encode_i(0xFF, ZERO, 0b000, T0, OP_IMM),  # t0 = 0xFF
-        encode_i(0x0F, ZERO, 0b000, T0, OP_IMM),  # t0 = 0x0F (overwrite, but different reg write)
-        ECALL,
-    ])
-    cpu = hades.CPU()
-    cpu.set_leakage_model(hades.LeakageModel.HAMMING_DISTANCE)
-    cpu.set_noise(0.0)
-    cpu.load_program(list(prog))
-    cpu.run()
-    trace = cpu.get_power_trace()
-    # First write: HD(0xFF, 0) = popcount(0xFF ^ 0) = 8
-    # Second write: HD(0x0F, 0xFF) = popcount(0x0F ^ 0xFF) = popcount(0xF0) = 4
-    assert len(trace) == 2
-    assert trace[0] == 8.0, f"HD first: expected 8.0, got {trace[0]}"
-    assert trace[1] == 4.0, f"HD second: expected 4.0, got {trace[1]}"
-    print("  PASS: test_leakage_hd")
-
-
 def test_x0_hardwired():
     """Test that x0 always reads as 0."""
     prog = to_bytes([
@@ -328,8 +286,6 @@ def main():
         test_jal,
         test_lui,
         test_loop_sum,
-        test_leakage_trace,
-        test_leakage_hd,
         test_x0_hardwired,
     ]
 

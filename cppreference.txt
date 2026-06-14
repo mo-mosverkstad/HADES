@@ -1,0 +1,138 @@
+Here's a more complete table showing the relationship between initialization syntax, constructor requirements, and behavior.
+
+```cpp
+class Widget {
+public:
+    Widget();                  // default constructor
+    Widget(int);               // single-argument constructor
+    Widget(int, int);          // two-argument constructor
+};
+```
+
+| Syntax                  | Initialization Category                   | What Happens for `Widget`                        |
+| ----------------------- | ----------------------------------------- | ------------------------------------------------ |
+| `Widget w;`             | Default initialization                    | Calls `Widget()`                                 |
+| `Widget w();`           | **Function declaration** (not an object!) | Declares a function named `w` returning `Widget` |
+| `Widget w = Widget();`  | Copy initialization                       | Creates from a temporary `Widget()`              |
+| `Widget w{};`           | Value initialization (via list-init)      | Calls `Widget()`                                 |
+| `Widget w = {};`        | Copy-list initialization                  | Calls `Widget()`                                 |
+| `Widget w(5);`          | Direct initialization                     | Calls `Widget(int)`                              |
+| `Widget w = 5;`         | Copy initialization                       | Calls `Widget(int)` if allowed                   |
+| `Widget w{5};`          | Direct-list initialization                | Calls `Widget(int)`                              |
+| `Widget w = {5};`       | Copy-list initialization                  | Calls `Widget(int)`                              |
+| `Widget w(1,2);`        | Direct initialization                     | Calls `Widget(int,int)`                          |
+| `Widget w{1,2};`        | Direct-list initialization                | Calls `Widget(int,int)`                          |
+| `Widget w = {1,2};`     | Copy-list initialization                  | Calls `Widget(int,int)`                          |
+| `Widget w = Widget(5);` | Copy initialization                       | Initializes from temporary                       |
+| `Widget w(Widget(5));`  | Direct initialization                     | Initializes from temporary                       |
+
+---
+
+## Built-in types
+
+For built-in types like `int`:
+
+| Syntax          | Result                         |
+| --------------- | ------------------------------ |
+| `int x;`        | Uninitialized (local variable) |
+| `int x = 5;`    | `5`                            |
+| `int x(5);`     | `5`                            |
+| `int x{5};`     | `5`                            |
+| `int x = {5};`  | `5`                            |
+| `int x{};`      | `0`                            |
+| `int x = {};`   | `0`                            |
+| `int x{3.14};`  | Error (narrowing)              |
+| `int x = 3.14;` | Allowed, value becomes `3`     |
+
+---
+
+## `std::vector`
+
+```cpp
+std::vector<int> v;
+```
+
+| Syntax                     | Meaning                       |
+| -------------------------- | ----------------------------- |
+| `std::vector<int> v;`      | Empty vector                  |
+| `std::vector<int> v{};`    | Empty vector                  |
+| `std::vector<int> v(5);`   | 5 elements initialized to `0` |
+| `std::vector<int> v(5,7);` | 5 elements initialized to `7` |
+| `std::vector<int> v{5};`   | 1 element: `{5}`              |
+| `std::vector<int> v{5,7};` | 2 elements: `{5,7}`           |
+
+This is one of the classic examples where `()` and `{}` mean different things.
+
+---
+
+## Aggregate types
+
+```cpp
+struct Point {
+    int x;
+    int y;
+};
+```
+
+| Syntax             | Meaning                                                        |
+| ------------------ | -------------------------------------------------------------- |
+| `Point p;`         | Members uninitialized                                          |
+| `Point p{};`       | `{0,0}`                                                        |
+| `Point p{1,2};`    | `x=1`, `y=2`                                                   |
+| `Point p = {1,2};` | Same as above                                                  |
+| `Point p(1,2);`    | Invalid before C++20; allowed in some C++20 aggregate contexts |
+
+---
+
+## Inside constructors (member initialization)
+
+```cpp
+class Memory {
+    std::vector<uint8_t> data_;
+
+public:
+    Memory()
+        : data_(1024, 0)
+    {}
+};
+```
+
+| Syntax          | Meaning                                           |
+| --------------- | ------------------------------------------------- |
+| `: data_()`     | Direct-initialize member with default constructor |
+| `: data_(10)`   | Direct-initialize member with one argument        |
+| `: data_(10,0)` | Direct-initialize member with two arguments       |
+| `: data_{10}`   | List-initialize member                            |
+| `: data_{10,0}` | List-initialize member                            |
+
+---
+
+## Constructor selection summary
+
+Given:
+
+```cpp
+class Widget {
+public:
+    Widget();
+    Widget(int);
+    Widget(std::initializer_list<int>);
+};
+```
+
+| Syntax            | Constructor Preferred                                    |
+| ----------------- | -------------------------------------------------------- |
+| `Widget w(5);`    | `Widget(int)`                                            |
+| `Widget w{5};`    | `Widget(std::initializer_list<int>)`                     |
+| `Widget w = {5};` | `Widget(std::initializer_list<int>)`                     |
+| `Widget w{};`     | `Widget()` or initializer-list constructor if applicable |
+
+This special preference for `std::initializer_list` is one reason modern C++ initialization rules can sometimes be surprising.
+
+### Rule of thumb
+
+* `()` → "call a constructor with these arguments."
+* `{}` → "list initialization" (safer, rejects narrowing).
+* `=` → copy initialization syntax.
+* No initializer → default initialization.
+* In constructor initializer lists (`: member(...)`) → direct initialization of members before the constructor body runs.

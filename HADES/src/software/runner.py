@@ -26,7 +26,6 @@ def main():
     parser.add_argument('--model', choices=['hw', 'hd'], default='hw', help='Leakage model')
     parser.add_argument('--dump-regs', action='store_true', help='Dump registers after execution')
     parser.add_argument('--dump-mem', type=str, help='Dump memory range (addr:len)')
-    parser.add_argument('--dump-trace', action='store_true', help='Print power trace')
     args = parser.parse_args()
 
     cpu = hades.CPU()
