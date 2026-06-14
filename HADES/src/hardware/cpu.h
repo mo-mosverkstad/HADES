@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <vector>
 #include "memory.h"
-#include "leakage.h"
 
 class CPU {
 public:
@@ -17,16 +16,11 @@ public:
     void reset();
 
     // Observation
-    std::vector<double> get_power_trace() const;
     uint64_t get_cycles() const;
     uint32_t get_pc() const;
     uint32_t get_reg(uint32_t idx) const;
     std::vector<uint8_t> read_mem(uint32_t addr, uint32_t len) const;
 
-    // Configuration
-    void set_leakage_model(LeakageModel model);
-    void set_noise(double stddev);
-    void set_seed(uint64_t seed);
 
 private:
     uint32_t regs_[32];
@@ -35,7 +29,6 @@ private:
     bool halted_;
 
     Memory mem_;
-    Leakage leak_;
 
     void write_reg(uint32_t rd, uint32_t value);
     void execute(uint32_t instr);

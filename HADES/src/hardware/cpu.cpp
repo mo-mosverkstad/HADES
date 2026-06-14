@@ -23,7 +23,6 @@ void CPU::reset() {
     cycles_ = 0;
     halted_ = false;
     mem_.clear();
-    leak_.clear();
 }
 
 void CPU::load_program(const std::vector<uint8_t>& binary, uint32_t base_addr) {
@@ -48,7 +47,6 @@ void CPU::run(uint32_t max_instructions) {
 void CPU::write_reg(uint32_t rd, uint32_t value) {
     if (rd == 0) return; // x0 is hardwired to 0
     regs_[rd] = value;
-    leak_.record(value);
 }
 
 // Immediate decoders
@@ -281,10 +279,6 @@ void CPU::execute(uint32_t instr) {
 }
 
 // Observation methods
-std::vector<double> CPU::get_power_trace() const {
-    return leak_.trace();
-}
-
 uint64_t CPU::get_cycles() const { return cycles_; }
 uint32_t CPU::get_pc() const { return pc_; }
 uint32_t CPU::get_reg(uint32_t idx) const { return (idx < 32) ? regs_[idx] : 0; }
@@ -292,8 +286,3 @@ uint32_t CPU::get_reg(uint32_t idx) const { return (idx < 32) ? regs_[idx] : 0; 
 std::vector<uint8_t> CPU::read_mem(uint32_t addr, uint32_t len) const {
     return mem_.dump(addr, len);
 }
-
-// Configuration
-void CPU::set_leakage_model(LeakageModel model) { leak_.set_model(model); }
-void CPU::set_noise(double stddev) { leak_.set_noise(stddev); }
-void CPU::set_seed(uint64_t seed) { leak_.set_seed(seed); }

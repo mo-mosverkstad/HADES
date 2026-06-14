@@ -34,7 +34,6 @@ def main():
     # Configure
     if args.model == 'hd':
         cpu.set_leakage_model(hades.LeakageModel.HAMMING_DISTANCE)
-    cpu.set_noise(args.noise)
 
     # Load program
     prog = load_binary(args.binary)
@@ -73,12 +72,6 @@ def main():
         for i in range(0, len(data), 16):
             hex_str = ' '.join(f'{b:02x}' for b in data[i:i+16])
             print(f"  {addr+i:#06x}: {hex_str}")
-
-    if args.dump_trace:
-        trace = cpu.get_power_trace()
-        print(f"\nPower trace ({len(trace)} samples):")
-        for i, p in enumerate(trace):
-            print(f"  [{i:4d}] {p:.4f}")
 
 
 if __name__ == '__main__':

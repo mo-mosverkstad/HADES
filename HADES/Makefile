@@ -5,14 +5,14 @@ RV_COPY  = riscv64-unknown-elf-objcopy
 CXXFLAGS   = -O2 -Wall -shared -std=c++17 -fPIC
 PYBIND_INC = $(shell python3 -m pybind11 --includes)
 EXT_SUFFIX = $(shell python3-config --extension-suffix)
-RVFLAGS    = -march=rv32i -mabi=ilp32 -nostdlib -T tools/programs/link.ld
+RVFLAGS    = -march=rv32i -mabi=ilp32 -nostdlib -T src/programs/link.ld
 
 BUILDDIR   = build
 TARGET     = $(BUILDDIR)/hades$(EXT_SUFFIX)
 
-SRCS = src/hardware/cpu.cpp engine/bridge/bindings.cpp
+SRCS = src/hardware/cpu.cpp src/bridge/bindings.cpp
 
-ASM_SRCS = $(wildcard tools/programs/*.S)
+ASM_SRCS = $(wildcard src/programs/*.S)
 ASM_BINS = $(ASM_SRCS:.S=.bin)
 
 .PHONY: all clean engine asm test
@@ -25,7 +25,7 @@ $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
 $(TARGET): $(SRCS) src/hardware/cpu.h src/hardware/memory.h | $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) $(PYBIND_INC) -Iengine/include $(SRCS) -o $@
+	$(CXX) $(CXXFLAGS) $(PYBIND_INC) -Isrc/hardware $(SRCS) -o $@
 
 asm: $(ASM_BINS)
 
@@ -36,10 +36,10 @@ asm: $(ASM_BINS)
 	$(RV_COPY) -O binary $< $@
 
 test: engine
-	PYTHONPATH=$(BUILDDIR) python3 software/test_cpu.py
+	PYTHONPATH=$(BUILDDIR) python3 src/software/test_cpu.py
 
 run: engine asm
-	PYTHONPATH=$(BUILDDIR) python3 software/runner.py $(ARGS)
+	PYTHONPATH=$(BUILDDIR) python3 src/software/runner.py $(ARGS)
 
 clean:
 	rm -rf $(BUILDDIR) src/programs/*.elf src/programs/*.bin
