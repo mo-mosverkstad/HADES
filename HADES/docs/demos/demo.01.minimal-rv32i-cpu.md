@@ -1,4 +1,4 @@
-# Demo 01 — Minimal RV32I CPU with Leakage
+# Demo 01 — Minimal RV32I CPU
 
 This demo shows how to set up the HADES environment, build the CPU engine, run regression tests, and observe power leakage traces.
 
@@ -112,11 +112,9 @@ HADES Phase 1 - RV32I CPU Regression Tests
   PASS: test_jal
   PASS: test_lui
   PASS: test_loop_sum
-  PASS: test_leakage_trace
-  PASS: test_leakage_hd
   PASS: test_x0_hardwired
 ==================================================
-Results: 12 passed, 0 failed, 12 total
+Results: 10 passed, 0 failed, 10 total
 All tests passed!
 ```
 
@@ -143,10 +141,10 @@ vi programs/my_test.S
 
 Build and run in one step:
 ```bash
-make run-asm FILE=programs/my_test.S
+make run-asm FILE=src/programs/my_test.S
 ```
 
-This assembles, converts to binary, and runs it with register + trace dump.
+This assembles, converts to binary, and runs it with register dump.
 
 ---
 
@@ -155,13 +153,13 @@ This assembles, converts to binary, and runs it with register + trace dump.
 Using the Makefile helper:
 
 ```bash
-make run ARGS="programs/test_basic.bin --dump-regs --dump-mem 0x20:8 --dump-trace"
+make run ARGS="programs/test_basic.bin --dump-regs --dump-mem 0x20:8"
 ```
 
 Or manually with PYTHONPATH:
 
 ```bash
-PYTHONPATH=build python3 layer4_software/runner.py programs/test_basic.bin --dump-regs --dump-mem 0x20:8 --dump-trace
+PYTHONPATH=build python3 layer4_software/runner.py programs/test_basic.bin --dump-regs --dump-mem 0x20:8
 ```
 
 Expected output (approximate):
@@ -178,11 +176,6 @@ Registers:
 
 Memory [0x0020:0x0028]:
   0x0020: 37 00 00 00 ff 00 00 00
-
-Power trace (N samples):
-  [   0] 1.0000
-  [   1] 1.0000
-  ...
 ```
 
 ---
@@ -197,10 +190,9 @@ PYTHONPATH=build python3
 import hades
 
 cpu = hades.CPU()
-cpu.set_noise(0.0)
 
 # Use the encoder functions from test_cpu.py
-exec(open('layer4_software/test_cpu.py').read())
+exec(open('src/software/test_cpu.py').read())
 
 prog = to_bytes([
     encode_i(0xAB, ZERO, 0b000, T0, OP_IMM),  # t0 = 0xAB
@@ -215,7 +207,6 @@ cpu.run()
 print(f"t0 = {cpu.get_reg(5):#x}")   # 0xab
 print(f"t1 = {cpu.get_reg(6):#x}")   # 0x55
 print(f"t2 = {cpu.get_reg(7):#x}")   # 0xfe
-print(f"trace = {cpu.get_power_trace()}")  # [popcount(0xAB), popcount(0x55), popcount(0xFE)]
 ```
 
 ---

@@ -2,11 +2,13 @@
 
 ---
 
-## 0. What Is HADES? (Big Picture)
+## 0. Introduction: What Is HADES? (Big Picture)
 
-HADES is a software simulator for a hardware board with RISC-V processor. The simulator is executing on Linux or WSL, but behaves as a RISC-V processor executing machine code.
+HADES is a software simulator for a hardware board with RISC-V processor. The simulator can be executed on Linux or WSL (using Windows), but behaves as a RISC-V processor executing machine code.
 
 ### 0.1 Real World vs HADES
+
+In real world, according to the diagram below, after compiling through the code chain from the human-friendly high-level C code, machine code is loaded into the memory of hardware processor which then executes the program. During program execution, the power consumption and power trace can be detected by measuring power pin using an oscilloscope, enabling attackers to recover any processing data. This execution process, apart from the compiling toolchain, can be simulated using HADES.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -49,7 +51,7 @@ HADES is a software simulator for a hardware board with RISC-V processor. The si
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 0.2 Simulator Layer Diagram
+### 0.2 Code Structure of Simulator
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -341,3 +343,21 @@ Step-by-step what happens when you run `make cpa`:
 | Bus arbitration | Not planned | Single-master system |
 
 The current simulator is a **single-cycle, single-core, no-cache CPU** — the simplest possible architecture that still produces meaningful side-channel leakage.
+
+## 1. Core Concepts of RISC-V and Minimal RISC-V Processor
+
+RISC-V is an open-standard instruction set architecture. RV32I is the 32-bit integer base:
+- Fixed 32-bit instruction width
+- 32 general-purpose registers (x0 always 0)
+- Load/store architecture (only loads/stores access memory)
+- 6 instruction formats: R, I, S, B, U, J
+
+**Instruction decoding** extracts fields by bit position:
+```
+bits [6:0]   → opcode (determines instruction type)
+bits [11:7]  → rd (destination register)
+bits [14:12] → funct3 (sub-operation selector)
+bits [19:15] → rs1 (source register 1)
+bits [24:20] → rs2 (source register 2)
+bits [31:25] → funct7 (further differentiation, e.g., ADD vs SUB)
+```
