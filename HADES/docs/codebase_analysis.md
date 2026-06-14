@@ -505,3 +505,265 @@ Python script
     ├─ get_reg(i)            → returns regs_[i]
     └─ read_mem(addr, len)   → returns mem_.dump(addr, len)
 ```
+
+## Phase 2: 3-Stage Pipeline
+
+### 2.1 Pipeline Design (`layer1_hardware/include/pipeline.h`)
+
+The DTEK-V uses a 3-stage pipeline (simpler than textbook 5-stage):
+
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐
+│  IF/ID   │───▶│    EX    │───▶│  MEM/WB  │
+│          │    │          │    │          │
+│ Fetch +  │    │ ALU      │    │ Memory   │
+│ Decode   │    │ Branch   │    │ Writeback│
+└──────────┘    └──────────┘    └──────────┘
+```
+
+Each stage is represented by a struct holding the instruction, PC, and computed values:
+- `StageIFID`: fetched instruction + PC
+- `StageEX`: ALU result, control flags (is_load, is_store, is_branch)
+- `StageMEMWB`: final result to write back to register file
+
+### 6.2 Forwarding
+
+Data forwarding eliminates stalls for ALU→ALU dependencies:
+
+```cpp
+uint32_t CPU::forward_reg(uint32_t reg_idx) const {
+    // Priority 1: forward from EX (most recent result)
+    if (ex_.valid && ex_.writes_rd && ex_.rd == reg_idx && !ex_.is_load)
+        return ex_.alu_result;
+    // Priority 2: forward from MEM/WB
+    if (memwb_.valid && memwb_.writes_rd && memwb_.rd == reg_idx)
+        return memwb_.result;
+    // No forwarding needed
+    return regs_[reg_idx];
+}
+```
+
+Key: loads CANNOT be forwarded from EX (data not available until MEM/WB), causing load-use stalls.
+
+### 6.3 Hazard Detection
+
+```cpp
+bool CPU::detect_load_use_hazard() const {
+    // EX has a load, and IF/ID needs that register
+    if (!ex_.valid || !ex_.is_load || !ifid_.valid) return false;
+    // Check if next instruction reads the load destination
+    ...
+}
+```
+
+When detected: insert 1-cycle bubble (stall IF/ID, let EX→MEM/WB proceed).
+
+### 6.4 Branch Handling
+
+Branches are resolved in EX stage. When taken:
+1. Redirect PC to branch target
+2. Flush IF/ID (the wrongly-fetched instruction)
+3. Increment `stalls_branch` counter
+
+This costs exactly 1 cycle per taken branch.
+
+### 6.5 Performance Counters
+
+```cpp
+struct PerfCounters {
+    uint64_t mcycle;        // total clock cycles
+    uint64_t minstret;      // retired instructions
+    uint64_t stalls_data;   // load-use hazard stalls
+    uint64_t stalls_branch; // branch penalty cycles
+};
+```
+
+Accessible via CSR instructions (CSRRW/CSRRS/CSRRC) or Python API.
+
+### 2.6 C++ Architecture: Why Not Polymorphism?
+
+#### The Problem
+
+Two CPU implementations exist:
+- `CPU` — single-cycle, simple, working (Phase 1)
+- `PipelinedCPU` — 3-stage pipeline with hazards, forwarding, perf counters
+
+They share a common API surface (`load_program`, `run`, `get_cycles`, `get_reg`, etc.) but differ in behavior and extra capabilities. The natural OOP instinct (especially from Java) is to create an interface:
+
+```cpp
+class CPUI {
+    virtual void run(uint32_t max) = 0;
+    virtual uint64_t get_cycles() const = 0;
+    // ...
+};
+class CPU : public CPUI { ... };
+class PipelinedCPU : public CPUI { ... };
+```
+
+#### Why This Doesn't Fit Here
+
+**1. The two classes are not truly interchangeable.**
+
+`PipelinedCPU` exposes pipeline-specific data (`get_instret()`, `get_perf()`, `stalls_data`, `stalls_branch`) that has no meaning on the single-cycle CPU. Code using the pipelined version will always need to know it's pipelined:
+
+```python
+# This defeats polymorphism — you need to know the concrete type
+if isinstance(cpu, hades.PipelinedCPU):
+    print(cpu.get_perf())
+```
+
+**2. No C++ code needs runtime dispatch.**
+
+There is no `std::vector<CPUI*>` holding a mix of CPUs. There is no factory returning `CPUI*`. Python picks one at construction time and uses it directly. The dispatch happens in Python, not C++.
+
+**3. Virtual inheritance adds cost and complexity without benefit.**
+
+| Aspect | Virtual inheritance | Separate classes |
+|--------|--------------------|-----------------------|
+| Runtime cost | vtable lookup per virtual call | zero |
+| Inlining | blocked (compiler can't see through vtable) | fully inlinable |
+| Object size | larger (vtable pointer) | minimal |
+| Cache locality in `run()` loop | worse (larger `this`) | better |
+| Shared state in base class | leads to fragile design, slicing bugs | each class owns its own state cleanly |
+| Diamond problem risk | yes, if hierarchy grows | impossible |
+| Compile-time error on interface mismatch | yes | no (solved by concepts, see below) |
+
+**4. Performance: not about 1-2ns per call.**
+
+The vtable cost per call is trivial. The real issue is that `virtual` prevents inlining. In the hot loop (`run()` calling `execute()`, `forward_reg()`, `write_reg()`), inlining is critical — the compiler can eliminate redundant loads, fold constants, and vectorize. Virtual blocks all of this.
+
+#### Where Polymorphism IS Appropriate in C++
+
+Use `virtual` when:
+- **Plugin systems**: load a DLL at runtime, get a `Base*` back, concrete type unknown at compile time
+- **Heterogeneous collections**: `std::vector<std::unique_ptr<Shape>>` holding circles, rectangles, etc.
+- **Factory patterns**: caller genuinely cannot know the concrete type
+- **Framework callbacks**: registering event handlers that the framework calls later
+
+None of these apply to HADES. The caller always knows whether it created a `CPU` or `PipelinedCPU`.
+
+#### The C++ Solution: Concepts + static_assert
+
+C++20 concepts enforce interface contracts at compile time with zero runtime cost:
+
+```cpp
+// cpu_concept.h
+#pragma once
+#include <concepts>
+#include <cstdint>
+#include <vector>
+
+template<typename T>
+concept CPULike = requires(T cpu, std::vector<uint8_t> bin, uint32_t addr, uint32_t len) {
+    { cpu.load_program(bin, addr) } -> std::same_as<void>;
+    { cpu.load_data(bin, addr) } -> std::same_as<void>;
+    { cpu.run(1u) } -> std::same_as<void>;
+    { cpu.reset() } -> std::same_as<void>;
+    { cpu.get_cycles() } -> std::same_as<uint64_t>;
+    { cpu.get_pc() } -> std::same_as<uint32_t>;
+    { cpu.get_reg(0u) } -> std::same_as<uint32_t>;
+    { cpu.read_mem(addr, len) } -> std::same_as<std::vector<uint8_t>>;
+};
+
+static_assert(CPULike<CPU>);
+static_assert(CPULike<PipelinedCPU>);
+```
+
+If someone changes `CPU::get_cycles()` to return `int` instead of `uint64_t`, the build fails immediately.
+
+#### Python-Side Polymorphism (Free)
+
+Python's duck typing provides polymorphism without any C++ mechanism:
+
+```python
+def run_and_report(cpu):  # accepts CPU or PipelinedCPU
+    cpu.run()
+    print(cpu.get_cycles())
+
+run_and_report(hades.CPU())
+run_and_report(hades.PipelinedCPU())
+```
+
+For stricter type checking (mypy, pydantic), use `Protocol`:
+
+```python
+from typing import Protocol
+
+class CPULike(Protocol):
+    def run(self, max_instructions: int = ...) -> None: ...
+    def get_cycles(self) -> int: ...
+    def get_reg(self, idx: int) -> int: ...
+```
+
+Both `hades.CPU` and `hades.PipelinedCPU` satisfy this protocol automatically — no C++ changes needed.
+
+#### Enforcing Binding Consistency (Macro)
+
+To prevent the pybind11 bindings from diverging:
+
+```cpp
+#define BIND_CPU_COMMON(cls, name) \
+    py::class_<cls>(m, name) \
+        .def(py::init<>()) \
+        .def("load_program", &cls::load_program, py::arg("binary"), py::arg("base_addr") = 0x1000) \
+        .def("load_data", &cls::load_data, py::arg("data"), py::arg("base_addr") = 0x0000) \
+        .def("run", &cls::run, py::arg("max_instructions") = 1000000) \
+        .def("reset", &cls::reset) \
+        .def("get_power_trace", &cls::get_power_trace) \
+        .def("get_cycles", &cls::get_cycles) \
+        .def("get_pc", &cls::get_pc) \
+        .def("get_reg", &cls::get_reg, py::arg("idx")) \
+        .def("read_mem", &cls::read_mem, py::arg("addr"), py::arg("len"))
+
+// Usage in bindings.cpp:
+BIND_CPU_COMMON(CPU, "CPU");
+BIND_CPU_COMMON(PipelinedCPU, "PipelinedCPU")
+    .def("get_instret", &PipelinedCPU::get_instret)
+    .def("get_perf", ...);  // pipeline-specific extras
+```
+
+If one class is missing a common method, the macro expansion fails at compile time.
+
+#### Summary
+
+| Approach | When to use | Cost |
+|----------|-------------|------|
+| C++ virtual (runtime polymorphism) | Collections of mixed types, plugins, factories | vtable + no inlining |
+| C++ concepts + static_assert | Compile-time interface contract between independent classes | zero runtime |
+| Python Protocol | Type-checked duck typing on the Python side | zero (annotation only) |
+| Binding macro | Ensure pybind11 exposes consistent API | zero runtime |
+
+**HADES uses**: separate classes + concept check + binding macro. This gives interface safety without inheritance overhead.
+
+#### File Layout (Final)
+
+```
+src/hardware/
+├── decode.h            # Shared: Decoded struct, decode(), AluResult, execute_alu()
+├── leakage.h           # Shared: Leakage class (HW/HD model + noise + trace)
+├── memory.h            # Shared: Memory class (64KB flat, header-only)
+├── pipeline.h          # Pipeline stage structs + PerfCounters
+├── cpu.h / cpu.cpp     # Single-cycle CPU (Phase 1, unchanged interface)
+├── pipelined_cpu.h/cpp # 3-stage pipelined CPU (Phase 2)
+└── cpu_concept.h       # CPULike concept + static_assert (compile-time check)
+```
+
+
+### 2.7 Why Not a Single Class with a Mode Flag?
+
+An earlier attempt merged both processors into one class with `set_pipeline_enabled(bool)`. This is worse than separate classes:
+
+**Problems with the flag approach:**
+- **Dead state**: pipeline registers sit unused in single-cycle mode; `cycles_` counter is redundant in pipeline mode
+- **Branching pollution**: every method gets `if (pipeline_enabled_)` checks
+- **Scales poorly**: adding a multi-cycle processor means `if (mode == SINGLE) ... else if (mode == PIPELINE) ... else if (mode == MULTICYCLE) ...` scattered throughout
+- **Testing risk**: one mode's test can accidentally touch the other mode's state
+- **Readability**: you can't read one execution model without mentally filtering out the other
+
+**Separate classes have:**
+- Zero performance overhead (no flags, no virtual, no branching)
+- Each file is self-contained and independently readable
+- Adding a new processor type = adding a new file, no existing code touched
+- `static_assert(CPULike<NewCPU>)` ensures API consistency at compile time
+
+**Design rule**: if two things have different internal behavior and different state, they should be different classes — even if their external API overlaps. Share code via composition (Memory, Leakage) and free functions (decode, execute_alu), not inheritance or flags.

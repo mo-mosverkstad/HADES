@@ -2,7 +2,7 @@ CXX      = g++
 RV_CC    = riscv64-unknown-elf-gcc
 RV_COPY  = riscv64-unknown-elf-objcopy
 
-CXXFLAGS   = -O2 -Wall -shared -std=c++17 -fPIC
+CXXFLAGS   = -O2 -Wall -shared -std=c++23 -fPIC
 PYBIND_INC = $(shell python3 -m pybind11 --includes)
 EXT_SUFFIX = $(shell python3-config --extension-suffix)
 RVFLAGS    = -march=rv32i -mabi=ilp32 -nostdlib -T src/programs/link.ld
@@ -10,7 +10,7 @@ RVFLAGS    = -march=rv32i -mabi=ilp32 -nostdlib -T src/programs/link.ld
 BUILDDIR   = build
 TARGET     = $(BUILDDIR)/hades$(EXT_SUFFIX)
 
-SRCS = src/hardware/cpu.cpp src/bridge/bindings.cpp
+SRCS = src/hardware/cpu.cpp src/hardware/pipelined_cpu.cpp src/bridge/bindings.cpp
 
 ASM_SRCS = $(wildcard src/programs/*.S)
 ASM_BINS = $(ASM_SRCS:.S=.bin)

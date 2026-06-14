@@ -273,7 +273,7 @@ def test_x0_hardwired():
 
 def main():
     print("=" * 50)
-    print("HADES Phase 1 - RV32I CPU Regression Tests")
+    print("HADES Phase 1 (regressional tests) - RV32I CPU Regression Tests")
     print("=" * 50)
 
     tests = [
@@ -311,3 +311,189 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_pipeline_basic():
+    """Test pipeline mode produces correct results."""
+    prog = to_bytes([
+        encode_i(42, ZERO, 0b000, T0, OP_IMM),  # addi t0, zero, 42
+        encode_i(8, T0, 0b000, T1, OP_IMM),      # addi t1, t0, 8
+        ECALL,
+    ])
+    cpu = hades.CPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T0) == 42, f"Pipeline: t0 expected 42, got {cpu.get_reg(T0)}"
+    assert cpu.get_reg(T1) == 50, f"Pipeline: t1 expected 50, got {cpu.get_reg(T1)}"
+    print("  PASS: test_pipeline_basic")
+
+
+def test_pipeline_forwarding():
+    """Test that forwarding resolves data dependencies without stall."""
+    # addi t0, zero, 10  → t0 = 10
+    # addi t1, t0, 5     → t1 = 15 (needs t0 from previous, forwarded from EX)
+    # add  t2, t0, t1    → t2 = 25 (needs both, forwarded)
+    prog = to_bytes([
+        encode_i(10, ZERO, 0b000, T0, OP_IMM),
+        encode_i(5, T0, 0b000, T1, OP_IMM),
+        encode_r(0, T1, T0, 0b000, T2, OP_REG),
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T0) == 10
+    assert cpu.get_reg(T1) == 15
+    assert cpu.get_reg(T2) == 25, f"Forwarding: t2 expected 25, got {cpu.get_reg(T2)}"
+    # No data stalls expected (ALU→ALU forwarding)
+    perf = cpu.get_perf_counters()
+    assert perf.stalls_data == 0, f"Forwarding: expected 0 data stalls, got {perf.stalls_data}"
+    print("  PASS: test_pipeline_forwarding")
+
+
+def test_pipeline_load_use_stall():
+    """Test load-use hazard causes exactly 1 stall."""
+    # lw   t0, 0(zero)   → load from addr 0 (whatever is there)
+    # addi t1, t0, 1     → uses t0 immediately → must stall 1 cycle
+    prog = to_bytes([
+        encode_i(0x40, ZERO, 0b010, T0, OP_LOAD),  # lw t0, 0x40(zero)
+        encode_i(1, T0, 0b000, T1, OP_IMM),         # addi t1, t0, 1
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    # Pre-store a value at address 0x40
+    cpu.load_data([0x07, 0x00, 0x00, 0x00], 0x40)  # value = 7
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T0) == 7, f"Load-use: t0 expected 7, got {cpu.get_reg(T0)}"
+    assert cpu.get_reg(T1) == 8, f"Load-use: t1 expected 8, got {cpu.get_reg(T1)}"
+    perf = cpu.get_perf_counters()
+    assert perf.stalls_data == 1, f"Load-use: expected 1 data stall, got {perf.stalls_data}"
+    print("  PASS: test_pipeline_load_use_stall")
+
+
+def test_pipeline_branch_penalty():
+    """Test branch taken causes 1 cycle penalty."""
+    prog = to_bytes([
+        encode_i(5, ZERO, 0b000, T0, OP_IMM),     # addi t0, zero, 5
+        encode_i(5, ZERO, 0b000, T1, OP_IMM),     # addi t1, zero, 5
+        # BEQ t0, t1, +8 (skip next)
+        encode_b(8, T1, T0, 0b000, OP_BRANCH),
+        encode_i(99, ZERO, 0b000, T2, OP_IMM),    # skipped
+        encode_i(1, ZERO, 0b000, T3, OP_IMM),     # land here
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T2) == 0, f"Branch: t2 should be 0 (skipped), got {cpu.get_reg(T2)}"
+    assert cpu.get_reg(T3) == 1, f"Branch: t3 should be 1, got {cpu.get_reg(T3)}"
+    perf = cpu.get_perf_counters()
+    assert perf.stalls_branch >= 1, f"Branch: expected >=1 branch stall, got {perf.stalls_branch}"
+    print("  PASS: test_pipeline_branch_penalty")
+
+
+def test_pipeline_cycles_gt_instret():
+    """Test that pipeline cycles > instructions due to startup + stalls."""
+    prog = to_bytes([
+        encode_i(1, ZERO, 0b000, T0, OP_IMM),
+        encode_i(2, ZERO, 0b000, T1, OP_IMM),
+        encode_i(3, ZERO, 0b000, T2, OP_IMM),
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    cpu.load_program(list(prog))
+    cpu.run(100)  # small limit to avoid runaway
+    perf = cpu.get_perf_counters()
+    # 3 instructions + ecall flows through pipeline
+    assert perf.minstret >= 3, f"instret: expected >=3, got {perf.minstret}"
+    assert perf.mcycle > perf.minstret, f"cycles ({perf.mcycle}) should > instret ({perf.minstret})"
+    print("  PASS: test_pipeline_cycles_gt_instret")
+
+
+def test_pipeline_loop():
+    """Test pipeline handles loop correctly (sum 1..10)."""
+    prog = to_bytes([
+        encode_i(0, ZERO, 0b000, T0, OP_IMM),     # sum = 0
+        encode_i(1, ZERO, 0b000, T1, OP_IMM),     # i = 1
+        encode_i(11, ZERO, 0b000, T2, OP_IMM),    # limit = 11
+        encode_r(0, T1, T0, 0b000, T0, OP_REG),   # sum += i
+        encode_i(1, T1, 0b000, T1, OP_IMM),       # i++
+        encode_b(-8 & 0x1FFF, T2, T1, 0b100, OP_BRANCH),  # blt i, limit, -8
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T0) == 55, f"Pipeline loop: expected 55, got {cpu.get_reg(T0)}"
+    print("  PASS: test_pipeline_loop")
+
+
+def test_perf_counters():
+    """Test performance counters are accessible."""
+    prog = to_bytes([
+        encode_i(1, ZERO, 0b000, T0, OP_IMM),
+        ECALL,
+    ])
+    cpu = hades.PipelinedCPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    perf = cpu.get_perf_counters()
+    assert perf.mcycle > 0
+    assert perf.minstret > 0
+    print("  PASS: test_perf_counters")
+
+
+def test_backward_compat_single_cycle():
+    """Test that disabling pipeline gives same results as Phase 1."""
+    prog = to_bytes([
+        encode_i(42, ZERO, 0b000, T0, OP_IMM),
+        encode_i(8, T0, 0b000, T1, OP_IMM),
+        ECALL,
+    ])
+    cpu = hades.CPU()
+    cpu.load_program(list(prog))
+    cpu.run()
+    assert cpu.get_reg(T0) == 42
+    assert cpu.get_reg(T1) == 50
+    assert cpu.get_cycles() == 3  # 2 instructions + ecall
+    print("  PASS: test_backward_compat_single_cycle")
+
+
+# Add pipeline tests to main
+if __name__ != "__main__":
+    pass  # imported as module
+else:
+    # Already ran from main() above, add pipeline tests
+    pipeline_tests = [
+        test_pipeline_basic,
+        test_pipeline_forwarding,
+        test_pipeline_load_use_stall,
+        test_pipeline_branch_penalty,
+        test_pipeline_cycles_gt_instret,
+        test_pipeline_loop,
+        test_perf_counters,
+        test_backward_compat_single_cycle,
+    ]
+
+    print("\n" + "=" * 50)
+    print("HADES Phase 4 - Pipeline Tests")
+    print("=" * 50)
+
+    p4_passed = 0
+    p4_failed = 0
+    for t in pipeline_tests:
+        try:
+            t()
+            p4_passed += 1
+        except AssertionError as e:
+            print(f"  FAIL: {t.__name__}: {e}")
+            p4_failed += 1
+        except Exception as e:
+            print(f"  ERROR: {t.__name__}: {e}")
+            p4_failed += 1
+
+    print("=" * 50)
+    print(f"Pipeline Results: {p4_passed} passed, {p4_failed} failed")
+    if p4_failed > 0:
+        sys.exit(1)

@@ -1,4 +1,4 @@
-# Demo 02 — Write, Build, and Run Custom RISC-V Assembly
+# Demo 01.1 — Write, Build, and Run Custom RISC-V Assembly
 
 This demo shows how to write your own RISC-V assembly programs and run them on the HADES simulator.
 
