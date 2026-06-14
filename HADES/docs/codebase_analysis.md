@@ -526,7 +526,7 @@ Each stage is represented by a struct holding the instruction, PC, and computed 
 - `StageEX`: ALU result, control flags (is_load, is_store, is_branch)
 - `StageMEMWB`: final result to write back to register file
 
-### 6.2 Forwarding
+### 2.2 Forwarding
 
 Data forwarding eliminates stalls for ALU→ALU dependencies:
 
@@ -545,7 +545,7 @@ uint32_t CPU::forward_reg(uint32_t reg_idx) const {
 
 Key: loads CANNOT be forwarded from EX (data not available until MEM/WB), causing load-use stalls.
 
-### 6.3 Hazard Detection
+### 2.3 Hazard Detection
 
 ```cpp
 bool CPU::detect_load_use_hazard() const {
@@ -558,7 +558,7 @@ bool CPU::detect_load_use_hazard() const {
 
 When detected: insert 1-cycle bubble (stall IF/ID, let EX→MEM/WB proceed).
 
-### 6.4 Branch Handling
+### 2.4 Branch Handling
 
 Branches are resolved in EX stage. When taken:
 1. Redirect PC to branch target
@@ -567,7 +567,7 @@ Branches are resolved in EX stage. When taken:
 
 This costs exactly 1 cycle per taken branch.
 
-### 6.5 Performance Counters
+### 2.5 Performance Counters
 
 ```cpp
 struct PerfCounters {
