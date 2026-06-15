@@ -4,7 +4,7 @@ Tests RV32I instruction execution using hand-encoded machine code.
 No RISC-V cross-compiler needed to run these tests.
 """
 import sys
-from asmpack import *
+from riscvtools.asmpack import *
 
 try:
     import hades

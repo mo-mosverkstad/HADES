@@ -36,15 +36,31 @@ asm: $(ASM_BINS)
 	$(RV_COPY) -O binary $< $@
 
 test: engine
-	PYTHONPATH=$(BUILDDIR) python3 src/software/test_cpu.py
+	PYTHONPATH=$(BUILDDIR):src python3 src/software/test_cpu.py
 
 run: engine asm
-	PYTHONPATH=$(BUILDDIR) python3 src/software/runner.py $(ARGS)
+	PYTHONPATH=$(BUILDDIR):src python3 src/software/runner.py $(ARGS)
 
 run-asm: engine
 	$(RV_CC) $(RVFLAGS) -o $(FILE:.S=.elf) $(FILE)
 	$(RV_COPY) -O binary $(FILE:.S=.elf) $(FILE:.S=.bin)
-	PYTHONPATH=$(BUILDDIR) python3 src/software/runner.py $(FILE:.S=.bin) --dump-regs
+	PYTHONPATH=$(BUILDDIR):src python3 src/software/runner.py $(FILE:.S=.bin) --dump-regs
+
+demo-01: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_01_basic_cpu.py
+
+demo-02: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_02_pipeline.py
+
+demo-03: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_03_cache.py
+
+demo-all: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_01_basic_cpu.py
+	@echo ""
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_02_pipeline.py
+	@echo ""
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_03_cache.py
 
 clean:
 	rm -rf $(BUILDDIR) src/programs/*.elf src/programs/*.bin
