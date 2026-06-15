@@ -39,5 +39,9 @@ PYBIND11_MODULE(hades, m) {
         .def("get_pc", &PipelinedCPU::get_pc)
         .def("get_reg", &PipelinedCPU::get_reg, py::arg("idx"))
         .def("read_mem", &PipelinedCPU::read_mem, py::arg("addr"), py::arg("len"))
-        .def("get_perf_counters", &PipelinedCPU::get_perf_counters);
+        .def("get_perf_counters", &PipelinedCPU::get_perf_counters)
+        .def("set_cache_enabled", &PipelinedCPU::set_cache_enabled, py::arg("enabled"))
+        .def("set_miss_penalty", &PipelinedCPU::set_miss_penalty, py::arg("cycles"))
+        .def("get_icache_misses", &PipelinedCPU::get_icache_misses)
+        .def("get_dcache_misses", &PipelinedCPU::get_dcache_misses);
 }

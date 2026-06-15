@@ -96,13 +96,12 @@
    - CSR address constants (mcycle, minstret, mhpmcounter3-4)
 
 2. **3-stage pipelined CPU** (`layer1_hardware/src/cpu.cpp`)
-   - Pipeline stages: IF/ID → EX → MEM/WB (matches DTEK-V)
+   - Pipeline stages: IF/ID -> EX -> MEM/WB (matches DTEK-V)
    - Back-to-front stage advancement per cycle
    - Data forwarding from EX and MEM/WB stages
    - Load-use hazard detection → 1 cycle stall (bubble insertion)
    - Branch penalty: 1 cycle (flush IF/ID on taken branch)
    - CSR read/write (CSRRW, CSRRS, CSRRC)
-   - Backward-compatible single-cycle mode (`set_pipeline_enabled(False)`)
 
 3. **Performance counters**
    - mcycle: total clock cycles
@@ -117,10 +116,41 @@
 
 5. **Pipeline regression tests** (8 new tests in `layer4_software/test_cpu.py`)
    - test_pipeline_basic: correct execution in pipeline mode
-   - test_pipeline_forwarding: EX→EX forwarding, 0 stalls
+   - test_pipeline_forwarding: EX->EX forwarding, 0 stalls
    - test_pipeline_load_use_stall: exactly 1 stall on load-use
-   - test_pipeline_branch_penalty: branch causes ≥1 stall
+   - test_pipeline_branch_penalty: branch causes >= 1 stall
    - test_pipeline_cycles_gt_instret: cycles > instructions
    - test_pipeline_loop: loop sum 1..10 = 55
    - test_perf_counters: counters accessible and non-zero
    - test_backward_compat_single_cycle: Phase 1-2 still works
+
+## Phase 3: Cache (L1 I-Cache + D-Cache)
+
+### What was implemented
+
+1. **Cache module** (`layer1_hardware/include/cache.h`)
+   - 2KB, direct-mapped, 32-byte blocks, 64 lines (matches DTEK-V spec)
+   - Address breakdown: `index = (addr >> 5) & 0x3F`, `tag = addr >> 11`
+   - Read access: allocate on miss
+   - Write access: write-through, no-write-allocate
+   - Hit/miss counters
+   - Flush operation (invalidate all lines)
+
+2. **CPU integration**
+   - L1 I-Cache: checked on every instruction fetch (pipeline mode)
+   - L1 D-Cache: checked on every load/store (both modes)
+   - Configurable miss penalty (default 20 cycles)
+   - Cache disabled by default (backward compat with Phase 1-4)
+   - `set_cache_enabled(True/False)` to toggle
+   - `set_miss_penalty(cycles)` to configure
+
+3. **Python API**
+   - `cpu.set_cache_enabled(bool)` — enable/disable cache simulation
+   - `cpu.set_miss_penalty(int)` — set miss penalty in cycles
+   - `cpu.get_icache_misses()` — instruction cache miss count
+   - `cpu.get_dcache_misses()` — data cache miss count
+
+4. **Demo** (`demos/demo_05_cache_attack.py`)
+   - Part 1: Basic hit/miss behavior (2 misses = 40 extra cycles)
+   - Part 2: AES with cache (31 D-cache misses observed)
+   - Part 3: Cache timing attack concept on AES key byte

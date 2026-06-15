@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include "memory.h"
 #include "pipeline.h"
+#include "cache.h"
 
 class PipelinedCPU {
 public:
@@ -27,6 +28,11 @@ public:
     // Performance counters (Phase 4)
     PerfCounters get_perf_counters() const;
 
+    uint64_t get_icache_misses() const;
+    uint64_t get_dcache_misses() const;
+    void set_cache_enabled(bool enabled);
+    void set_miss_penalty(uint32_t cycles);
+
 private:
     // Register file
     uint32_t regs_[32];
@@ -46,6 +52,10 @@ private:
 
     // Subsystems
     Memory mem_;
+    Cache icache_;       // L1 instruction cache
+    Cache dcache_;       // L1 data cache
+    bool cache_enabled_;
+    uint32_t miss_penalty_;  // cycles added on cache miss
 
     // Pipeline operations
     void pipeline_cycle();

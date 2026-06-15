@@ -21,12 +21,16 @@ void PipelinedCPU::reset() {
     for (int i = 0; i < 32; i++) regs_[i] = 0;
     pc_ = 0x1000;
     halted_ = false;
+    cache_enabled_ = false;
+    miss_penalty_ = 20;
     ifid_ = {};
     ex_ = {};
     memwb_ = {};
     perf_.reset();
     csrs_.clear();
     mem_.clear();
+    icache_.reset();
+    dcache_.reset();
 }
 
 void PipelinedCPU::load_program(const std::vector<uint8_t>& binary, uint32_t base_addr) {
@@ -107,6 +111,14 @@ void PipelinedCPU::stage_memory() {
         uint32_t addr = ex_.alu_result;
         uint32_t instr = ex_.instr;
         uint32_t f3 = (instr >> 12) & 0x7;
+
+        // D-cache access
+        if (cache_enabled_) {
+            if (!dcache_.access(addr)) {
+                perf_.mcycle += miss_penalty_; // stall on D-cache miss
+            }
+        }
+
         uint32_t val = 0;
         switch (f3) {
             case 0b000: { int8_t b = (int8_t)mem_.read_byte(addr); val = (uint32_t)(int32_t)b; break; }
@@ -121,6 +133,11 @@ void PipelinedCPU::stage_memory() {
         uint32_t addr = ex_.alu_result;
         uint32_t instr = ex_.instr;
         uint32_t f3 = (instr >> 12) & 0x7;
+
+        if (cache_enabled_) {
+            dcache_.write_access(addr);
+        }
+
         switch (f3) {
             case 0b000: mem_.write_byte(addr, ex_.rs2_val & 0xFF); break;
             case 0b001: mem_.write_half(addr, ex_.rs2_val & 0xFFFF); break;
@@ -206,6 +223,13 @@ void PipelinedCPU::stage_execute() {
 void PipelinedCPU::stage_fetch_decode() {
     // If EX took a branch, IF/ID was already flushed and PC redirected
     if (ex_.is_branch && ex_.branch_taken) return;
+
+    // I-cache access
+    if (cache_enabled_) {
+        if (!icache_.access(pc_)) {
+            perf_.mcycle += miss_penalty_; // stall on I-cache miss
+        }
+    }
 
     ifid_.instr = mem_.read_word(pc_);
     ifid_.pc = pc_;
@@ -427,3 +451,7 @@ uint32_t PipelinedCPU::get_pc() const { return pc_; }
 uint32_t PipelinedCPU::get_reg(uint32_t idx) const { return (idx < 32) ? regs_[idx] : 0; }
 std::vector<uint8_t> PipelinedCPU::read_mem(uint32_t addr, uint32_t len) const { return mem_.dump(addr, len); }
 PerfCounters PipelinedCPU::get_perf_counters() const { return perf_; }
+void PipelinedCPU::set_cache_enabled(bool enabled) { cache_enabled_ = enabled; }
+void PipelinedCPU::set_miss_penalty(uint32_t cycles) { miss_penalty_ = cycles; }
+uint64_t PipelinedCPU::get_icache_misses() const { return icache_.get_misses(); }
+uint64_t PipelinedCPU::get_dcache_misses() const { return dcache_.get_misses(); }
