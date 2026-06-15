@@ -767,3 +767,170 @@ An earlier attempt merged both processors into one class with `set_pipeline_enab
 - `static_assert(CPULike<NewCPU>)` ensures API consistency at compile time
 
 **Design rule**: if two things have different internal behavior and different state, they should be different classes — even if their external API overlaps. Share code via composition (Memory, Leakage) and free functions (decode, execute_alu), not inheritance or flags.
+
+## Phase 3: Cache
+
+### 3.1 Cache Design (`layer1_hardware/include/cache.h`)
+
+Matches DTEK-V specification:
+- 2KB total, 64 lines, 32 bytes per block
+- Direct-mapped (each address maps to exactly one line)
+- Write-through (stores always go to memory)
+
+```
+Address: [tag (21 bits) | index (6 bits) | offset (5 bits)]
+         addr >> 11       (addr>>5)&0x3F   addr & 0x1F
+```
+
+### 3.2 Hit/Miss Logic
+
+```cpp
+bool Cache::access(uint32_t addr) {
+    uint32_t index = (addr >> OFFSET_BITS) & (NUM_LINES - 1);
+    uint32_t tag = addr >> TAG_SHIFT;
+
+    if (lines_[index].valid && lines_[index].tag == tag) {
+        hits_++;
+        return true;   // HIT: 1 cycle
+    } else {
+        lines_[index] = {true, tag};  // allocate
+        misses_++;
+        return false;  // MISS: pay miss_penalty + memory latency
+    }
+}
+```
+
+### 3.3 Integration with CPU
+
+Two cache instances:
+- **I-Cache**: checked on every instruction fetch (pipeline mode)
+- **D-Cache**: checked on every load/store
+
+On miss: `perf_.mcycle += miss_penalty + mem_hierarchy_latency`
+
+### 3.4 Common Interface Refactor (`cpu_concept.h`)
+
+Formalized the shared API between `CPU` and `PipelinedCPU` using a C++20 concept:
+
+```cpp
+template<typename T>
+concept CPULike = requires(T cpu, ...) {
+    cpu.load_program(bin, addr);
+    cpu.load_data(bin, addr);
+    cpu.run(1u);
+    cpu.reset();
+    cpu.get_cycles();
+    cpu.get_pc();
+    cpu.get_reg(0u);
+    cpu.read_mem(addr, len);
+};
+```
+
+Both classes are statically asserted to satisfy this contract.
+
+### 3.5 CRTP Base Class (`cpu_base.h`)
+
+Extracted shared state and accessor implementations into `CPUBase<Derived>`:
+
+**State:**
+- `regs_[32]`, `pc_`, `halted_`, `mem_`
+- `icache_`, `dcache_`, `cache_enabled_`, `miss_penalty_`
+
+**Methods provided by base:**
+- `load_program()`, `load_data()`
+- `get_pc()`, `get_reg()`, `read_mem()`
+- `set_cache_enabled()`, `set_miss_penalty()`, `get_icache_misses()`, `get_dcache_misses()`
+- `write_reg()` (protected)
+
+Zero vtable overhead — each instantiation (`CPUBase<CPU>`, `CPUBase<PipelinedCPU>`) is a fully independent class resolved at compile time.
+
+### 3.6 Shared ISA Decode (`rv32_decode.h`)
+
+Extracted the parts genuinely common to both execution models:
+
+- `RV32_Opcode` enum (was duplicated in both .cpp files)
+- `Decoded` struct + `decode_instr()` inline function
+
+**Not included here:** `ExecResult` and `execute_alu()` — these produce pipeline-stage metadata (`is_branch`, `branch_taken`, `branch_target`, `store_value`) that only the pipelined model needs. The single-cycle CPU executes directly via a switch on decoded fields.
+
+### 3.7 Cache Integration
+
+Caches moved to `CPUBase` so both processors can use them uniformly. Each CPU's execution loop is responsible for:
+- Calling `icache_.access(pc_)` on instruction fetch
+- Calling `dcache_.access(addr)` on loads
+- Calling `dcache_.write_access(addr)` on stores
+- Adding `miss_penalty_` to its own cycle counter on misses
+
+### 3.8 What Stays Unique to Each Class
+
+| `CPU` | `PipelinedCPU` |
+|-------|----------------|
+| `cycles_` counter | `PerfCounters perf_` (mcycle, minstret, stalls_data, stalls_branch) |
+| Single `execute()` switch | Pipeline stages (IF/ID → EX → MEM/WB) |
+| Direct register reads | Forwarding logic (`forward_reg()`) |
+| — | Hazard detection (`detect_load_use_hazard()`) |
+| — | `ExecResult` / `execute_alu()` (structured output for pipeline) |
+| — | CSR registers |
+
+---
+
+### 3.9 Consideration: Memory + Cache Facade (Memory hierarchy)
+
+### Current Design
+
+Cache and memory are separate objects. Each CPU manually interleaves cache checks with memory accesses:
+
+```cpp
+// Scattered in CPU execute logic:
+if (cache_enabled_ && !dcache_.access(addr))
+    cycles_ += miss_penalty_;
+uint32_t val = mem_.read_word(addr);
+```
+
+### Facade Alternative
+
+A `CachedMemory` class wrapping both behind a unified interface:
+
+```cpp
+class CachedMemory {
+public:
+    uint32_t read_word(uint32_t addr) {
+        if (enabled_ && !cache_.access(addr))
+            penalty_cycles_ += miss_penalty_;
+        return mem_.read_word(addr);
+    }
+    void write_word(uint32_t addr, uint32_t val) {
+        if (enabled_) cache_.write_access(addr);
+        mem_.write_word(addr, val);
+    }
+    uint32_t drain_penalty() {
+        uint32_t p = penalty_cycles_;
+        penalty_cycles_ = 0;
+        return p;
+    }
+    // ... read_byte, read_half, write_byte, write_half, load, dump ...
+private:
+    Memory mem_;
+    Cache cache_;
+    bool enabled_ = false;
+    uint32_t miss_penalty_ = 20;
+    uint32_t penalty_cycles_ = 0;
+};
+```
+
+`CPUBase` would hold `CachedMemory imem_` (instruction) and `CachedMemory dmem_` (data). CPU code would just call `imem_.read_word(pc_)` without cache awareness.
+
+### Tradeoffs
+
+| | Current (explicit) | Facade |
+|-|-------------------|--------|
+| Code duplication | Cache checks in both CPUs | Eliminated |
+| Composability | Hard to add L2 | Easy — stack layers |
+| Pedagogic clarity | Students see cache/memory interaction | Hidden behind abstraction |
+| Pipeline interaction | Penalty directly modifies `perf_.mcycle` in situ | Must drain penalty and integrate with pipeline timing |
+| Extensibility | Each new CPU must remember to add cache calls | Automatic |
+
+### Recommendation
+
+- **Do the facade** if the memory hierarchy will grow (L2, bus contention, NUMA).
+- **Keep current design** if the simulator stays at L1-only and pedagogic visibility of cache behavior matters more than code elegance.
