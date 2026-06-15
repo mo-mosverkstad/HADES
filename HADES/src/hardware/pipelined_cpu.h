@@ -4,7 +4,6 @@
 #include <unordered_map>
 #include "cpu_base.h"
 #include "pipeline.h"
-#include "cache.h"
 
 struct Decoded; // forward declare
 
@@ -32,11 +31,6 @@ public:
     // Performance counters
     PerfCounters get_perf_counters() const;
 
-    uint64_t get_icache_misses() const;
-    uint64_t get_dcache_misses() const;
-    void set_cache_enabled(bool enabled);
-    void set_miss_penalty(uint32_t cycles);
-
 private:
     // Pipeline stages
     StageIFID ifid_;
@@ -48,12 +42,6 @@ private:
 
     // CSR registers
     std::unordered_map<uint32_t, uint32_t> csrs_;
-
-    // Subsystems
-    Cache icache_;
-    Cache dcache_;
-    bool cache_enabled_;
-    uint32_t miss_penalty_;
 
     // Pipeline operations
     void pipeline_cycle();

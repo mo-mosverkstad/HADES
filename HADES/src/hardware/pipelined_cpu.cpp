@@ -351,7 +351,3 @@ void PipelinedCPU::csr_write(uint32_t addr, uint32_t value) {
 uint64_t PipelinedCPU::get_cycles() const { return perf_.mcycle; }
 uint64_t PipelinedCPU::get_instret() const { return perf_.minstret; }
 PerfCounters PipelinedCPU::get_perf_counters() const { return perf_; }
-void PipelinedCPU::set_cache_enabled(bool enabled) { cache_enabled_ = enabled; }
-void PipelinedCPU::set_miss_penalty(uint32_t cycles) { miss_penalty_ = cycles; }
-uint64_t PipelinedCPU::get_icache_misses() const { return icache_.get_misses(); }
-uint64_t PipelinedCPU::get_dcache_misses() const { return dcache_.get_misses(); }
