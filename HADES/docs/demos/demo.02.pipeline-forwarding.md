@@ -7,7 +7,7 @@ This demo shows the HADES CPU running in pipelined mode, demonstrating data forw
 ## 1. Build
 
 ```bash
-source ~/projects/hwsec/bin/activate
+source .venv/bin/activate
 cd <project-path>/HADES
 make engine
 ```
@@ -24,13 +24,20 @@ Expected output includes both Phase 1 tests (single-cycle) and Phase 4 pipeline 
 
 ```
 ==================================================
-HADES Phase 1 - RV32I CPU Regression Tests
+HADES Phase 1 (regressional tests) - RV32I CPU Regression Tests
 ==================================================
   PASS: test_addi
-  ...
+  PASS: test_add_sub
+  PASS: test_logic
+  PASS: test_shift
+  PASS: test_load_store
+  PASS: test_branch
+  PASS: test_jal
+  PASS: test_lui
+  PASS: test_loop_sum
   PASS: test_x0_hardwired
 ==================================================
-Results: 12 passed, 0 failed, 12 total
+Results: 10 passed, 0 failed, 10 total
 All tests passed!
 
 ==================================================
@@ -59,8 +66,7 @@ PYTHONPATH=build python3
 ```python
 import hades
 
-cpu = hades.CPU()
-cpu.set_pipeline_enabled(True)
+cpu = hades.PipelinedCPU()
 
 # Program with data dependency (forwarding)
 import struct
@@ -97,7 +103,7 @@ t0=10, t1=15, t2=25
 ## 4. Observe Load-Use Stall
 
 ```python
-cpu = hades.CPU()
+cpu = hades.PipelinedCPU()
 cpu.set_pipeline_enabled(True)
 
 # Store 7 at address 0x40, then load + use immediately
@@ -128,14 +134,12 @@ binary = b''.join(struct.pack('<I', x) for x in prog)
 
 # Single-cycle mode
 cpu1 = hades.CPU()
-cpu1.set_pipeline_enabled(False)
 cpu1.load_program(list(binary))
 cpu1.run()
 print(f"Single-cycle: {cpu1.get_cycles()} cycles, {cpu1.get_instret()} instret")
 
 # Pipeline mode
-cpu2 = hades.CPU()
-cpu2.set_pipeline_enabled(True)
+cpu2 = hades.PipelinedCPU()
 cpu2.load_program(list(binary))
 cpu2.run()
 perf = cpu2.get_perf_counters()
@@ -155,17 +159,6 @@ print(f"Pipeline IPC: {perf.minstret / perf.mcycle:.2f}")
 | IPC < 1 | Pipeline startup + stalls | mcycle > minstret |
 
 ---
-
-## 7. Backward Compatibility
-
-Phase 1-2 code still works unchanged:
-```python
-cpu = hades.CPU()
-cpu.set_pipeline_enabled(False)  # single-cycle mode
-# ... all Phase 1-2 tests pass identically
-```
-
-The CPA attack (`make cpa`) also works in both modes — pipeline mode just takes more cycles but produces the same leakage pattern.
 
 ---
 

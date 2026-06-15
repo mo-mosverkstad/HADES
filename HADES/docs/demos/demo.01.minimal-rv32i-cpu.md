@@ -153,7 +153,7 @@ This assembles, converts to binary, and runs it with register dump.
 Using the Makefile helper:
 
 ```bash
-make run ARGS="programs/test_basic.bin --dump-regs --dump-mem 0x20:8"
+make run ARGS="src/programs/test_basic.bin --dump-regs --dump-mem 0x20:8"
 ```
 
 Or manually with PYTHONPATH:
@@ -188,6 +188,7 @@ PYTHONPATH=build python3
 
 ```python
 import hades
+from asmpack import *
 
 cpu = hades.CPU()
 

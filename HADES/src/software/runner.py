@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--dump-mem', type=str, help='Dump memory range (addr:len)')
     args = parser.parse_args()
 
-    cpu = hades.CPU()
+    cpu = hades.PipelinedCPU()
 
     # Configure
     if args.model == 'hd':

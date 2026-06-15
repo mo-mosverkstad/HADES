@@ -1,4 +1,5 @@
 #include "pipelined_cpu.h"
+#include <iostream>
 
 // RV32I opcode constants
 enum RV32_Opcode {
@@ -69,7 +70,12 @@ void PipelinedCPU::pipeline_cycle() {
     stage_memory();
 
     // If halted was set by previous EX (ECALL), don't fetch/execute more
-    if (halted_) return;
+    if (halted_){
+        // drain the pipeline by clearing ex and ifid registers
+        ex_ = {};
+        ifid_ = {};
+        return;
+    }
 
     stage_execute();
     stage_fetch_decode();
