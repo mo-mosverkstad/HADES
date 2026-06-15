@@ -14,7 +14,11 @@ void CPU::reset() {
 void CPU::run(uint32_t max_instructions) {
     uint32_t count = 0;
     while (!halted_ && count < max_instructions) {
+        if (cache_enabled_ && !icache_.access(pc_)) {
+            cycles_ += miss_penalty_;
+        }
         uint32_t instr = mem_.read_word(pc_);
+        
         execute(instr);
         cycles_++;
         count++;
@@ -70,6 +74,10 @@ void CPU::execute(uint32_t instr) {
     case OP_LOAD: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_i;
         uint32_t val = 0;
+        if (cache_enabled_ && !dcache_.access(addr)) {
+            cycles_ += miss_penalty_;
+        }
+
         switch (d.funct3) {
             case 0b000: val = (uint32_t)(int32_t)(int8_t)mem_.read_byte(addr); break;
             case 0b001: val = (uint32_t)(int32_t)(int16_t)mem_.read_half(addr); break;
@@ -84,6 +92,10 @@ void CPU::execute(uint32_t instr) {
 
     case OP_STORE: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_s;
+        if (cache_enabled_) {
+            dcache_.write_access(addr);
+        }
+
         switch (d.funct3) {
             case 0b000: mem_.write_byte(addr, regs_[d.rs2] & 0xFF); break;
             case 0b001: mem_.write_half(addr, regs_[d.rs2] & 0xFFFF); break;
