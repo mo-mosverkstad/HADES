@@ -8,17 +8,15 @@ void CPU::reset() {
     pc_ = 0x1000;
     cycles_ = 0;
     halted_ = false;
-    mem_.clear();
+    mem_.reset();
 }
 
 void CPU::run(uint32_t max_instructions) {
     uint32_t count = 0;
     while (!halted_ && count < max_instructions) {
-        if (cache_enabled_ && !icache_.access(pc_)) {
-            cycles_ += miss_penalty_;
-        }
-        uint32_t instr = mem_.read_word(pc_);
-        
+        uint32_t instr = mem_.icache().read_word(pc_);
+        cycles_ += mem_.icache().drain_penalty();
+
         execute(instr);
         cycles_++;
         count++;
@@ -74,22 +72,14 @@ void CPU::execute(uint32_t instr) {
     case OP_LOAD: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_i;
         uint32_t val = 0;
-        if (cache_enabled_) {
-            if (!dcache_.access(addr)) {
-                uint32_t mem_lat = mem_.compute_latency(addr);
-                cycles_ += miss_penalty_ + mem_lat;
-            }
-        } else if (mem_.is_enabled()) {
-            cycles_ += mem_.compute_latency(addr);
-        }
-
         switch (d.funct3) {
-            case 0b000: val = (uint32_t)(int32_t)(int8_t)mem_.read_byte(addr); break;
-            case 0b001: val = (uint32_t)(int32_t)(int16_t)mem_.read_half(addr); break;
-            case 0b010: val = mem_.read_word(addr); break;
-            case 0b100: val = mem_.read_byte(addr); break;
-            case 0b101: val = mem_.read_half(addr); break;
+            case 0b000: val = (uint32_t)(int32_t)(int8_t)mem_.dcache().read_byte(addr); break;
+            case 0b001: val = (uint32_t)(int32_t)(int16_t)mem_.dcache().read_half(addr); break;
+            case 0b010: val = mem_.dcache().read_word(addr); break;
+            case 0b100: val = mem_.dcache().read_byte(addr); break;
+            case 0b101: val = mem_.dcache().read_half(addr); break;
         }
+        cycles_ += mem_.dcache().drain_penalty();
         write_reg(d.rd, val);
         pc_ += 4;
         break;
@@ -97,18 +87,12 @@ void CPU::execute(uint32_t instr) {
 
     case OP_STORE: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_s;
-        if (cache_enabled_) {
-            dcache_.write_access(addr);
-        }
-        if (mem_.is_enabled()) {
-            mem_.compute_latency(addr, true);
-        }
-
         switch (d.funct3) {
-            case 0b000: mem_.write_byte(addr, regs_[d.rs2] & 0xFF); break;
-            case 0b001: mem_.write_half(addr, regs_[d.rs2] & 0xFFFF); break;
-            case 0b010: mem_.write_word(addr, regs_[d.rs2]); break;
+            case 0b000: mem_.dcache().write_byte(addr, regs_[d.rs2] & 0xFF); break;
+            case 0b001: mem_.dcache().write_half(addr, regs_[d.rs2] & 0xFFFF); break;
+            case 0b010: mem_.dcache().write_word(addr, regs_[d.rs2]); break;
         }
+        mem_.dcache().drain_penalty();
         pc_ += 4;
         break;
     }

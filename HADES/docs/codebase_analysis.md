@@ -874,66 +874,111 @@ Caches moved to `CPUBase` so both processors can use them uniformly. Each CPU's 
 
 ---
 
-### 3.9 Consideration: Memory + Cache Facade (Memory hierarchy)
+### 3.9 Memory Subsystem Refactoring
 
-### Current Design
+#### Problem (Phase 1-3 design)
 
-Cache and memory are separate objects. Each CPU manually interleaves cache checks with memory accesses:
+Cache checks, hierarchy latency computation, and raw memory access were scattered across both CPU implementations:
 
 ```cpp
-// Scattered in CPU execute logic:
+// Duplicated in cpu.cpp AND pipelined_cpu.cpp:
 if (cache_enabled_ && !dcache_.access(addr))
-    cycles_ += miss_penalty_;
+    cycles_ += miss_penalty_ + mem_.compute_latency(addr);
 uint32_t val = mem_.read_word(addr);
 ```
 
-### Facade Alternative
+Each CPU had to manually orchestrate cache → hierarchy → raw access. Adding a new memory feature required editing every CPU.
 
-A `CachedMemory` class wrapping both behind a unified interface:
+#### Solution: Composite Memory Object (Implemented)
+
+A single `Memory` class (composite pattern) owns the entire memory subsystem. Sub-components are accessed via getters for chaining.
+
+**File**: `src/hardware/memory.h`
+
+```
+Memory                              (single composite, owned by CPUBase)
+  ├─ MemHierarchy hierarchy_        (64KB backing store + SDRAM latency model)
+  ├─ MemoryPort icache_             (instruction cache port)
+  └─ MemoryPort dcache_             (data cache port)
+```
+
+**Classes**:
+
+- `MemoryPort` — one access path with its own L1 cache. Handles cache lookup, latency accumulation, and penalty draining. References the shared `MemHierarchy`.
+- `Memory` — composite owning `MemHierarchy` + two `MemoryPort` instances. Provides global config methods and direct load/dump (bypassing cache).
+
+**CPU usage (chaining)**:
 
 ```cpp
-class CachedMemory {
+// CPUBase holds single member:
+Memory mem_;
+
+// Instruction fetch:
+uint32_t instr = mem_.icache().read_word(pc_);
+perf_.mcycle += mem_.icache().drain_penalty();
+
+// Data load:
+uint32_t val = mem_.dcache().read_word(addr);
+perf_.mcycle += mem_.dcache().drain_penalty();
+
+// Data store (drain but don't stall — write buffer model):
+mem_.dcache().write_word(addr, val);
+mem_.dcache().drain_penalty();
+
+// Configuration (from Python bindings):
+mem_.set_hierarchy_enabled(true);
+mem_.set_cache_enabled(true);
+mem_.set_miss_penalty(20);
+
+// Stats:
+mem_.sdram().get_row_hits();
+mem_.icache().get_cache_misses();
+```
+
+**CPUBase is now minimal**:
+
+```cpp
+template<typename Derived>
+class CPUBase {
+protected:
+    uint32_t regs_[32]{};
+    uint32_t pc_ = 0x1000;
+    bool halted_ = false;
+    Memory mem_;                  // ← single member for all memory
+    void write_reg(uint32_t rd, uint32_t value);
 public:
-    uint32_t read_word(uint32_t addr) {
-        if (enabled_ && !cache_.access(addr))
-            penalty_cycles_ += miss_penalty_;
-        return mem_.read_word(addr);
-    }
-    void write_word(uint32_t addr, uint32_t val) {
-        if (enabled_) cache_.write_access(addr);
-        mem_.write_word(addr, val);
-    }
-    uint32_t drain_penalty() {
-        uint32_t p = penalty_cycles_;
-        penalty_cycles_ = 0;
-        return p;
-    }
-    // ... read_byte, read_half, write_byte, write_half, load, dump ...
-private:
-    Memory mem_;
-    Cache cache_;
-    bool enabled_ = false;
-    uint32_t miss_penalty_ = 20;
-    uint32_t penalty_cycles_ = 0;
+    // All config/stats delegate to mem_:
+    void set_cache_enabled(bool e)        { mem_.set_cache_enabled(e); }
+    void set_miss_penalty(uint32_t c)     { mem_.set_miss_penalty(c); }
+    void set_mem_hierarchy_enabled(bool e) { mem_.set_hierarchy_enabled(e); }
+    uint64_t get_icache_misses() const    { return mem_.icache().get_cache_misses(); }
+    uint64_t get_dcache_misses() const    { return mem_.dcache().get_cache_misses(); }
+    uint64_t get_sdram_row_hits() const   { return mem_.sdram().get_row_hits(); }
+    uint64_t get_sdram_row_misses() const { return mem_.sdram().get_row_misses(); }
 };
 ```
 
-`CPUBase` would hold `CachedMemory imem_` (instruction) and `CachedMemory dmem_` (data). CPU code would just call `imem_.read_word(pc_)` without cache awareness.
+#### Design Benefits
 
-### Tradeoffs
+| Property | Result |
+|----------|--------|
+| Single ownership | One `mem_` object, one `reset()`, one lifetime |
+| CPU code simplicity | No cache/hierarchy logic in CPU — just read/write + drain |
+| Extensibility | Add L2, write buffer, bus contention inside `Memory` without touching CPUBase |
+| Chaining clarity | `mem_.dcache().read_word(addr)` makes access path explicit |
+| No constructor wiring | `Memory` internally constructs ports with hierarchy reference |
+| Bindings unchanged | Python API still uses `cpu.set_cache_enabled()` etc. |
 
-| | Current (explicit) | Facade |
-|-|-------------------|--------|
-| Code duplication | Cache checks in both CPUs | Eliminated |
-| Composability | Hard to add L2 | Easy — stack layers |
-| Pedagogic clarity | Students see cache/memory interaction | Hidden behind abstraction |
-| Pipeline interaction | Penalty directly modifies `perf_.mcycle` in situ | Must drain penalty and integrate with pipeline timing |
-| Extensibility | Each new CPU must remember to add cache calls | Automatic |
+#### Files After Refactoring
 
-### Recommendation
-
-- **Do the facade** if the memory hierarchy will grow (L2, bus contention, NUMA).
-- **Keep current design** if the simulator stays at L1-only and pedagogic visibility of cache behavior matters more than code elegance.
+| File | Content |
+|------|---------|
+| `src/hardware/memory.h` | `Memory` composite + `MemoryPort` class |
+| `src/hardware/mem_hierarchy.h` | `MemHierarchy` (backing store) + `SDRAMModel` |
+| `src/hardware/cache.h` | `Cache` (L1, direct-mapped, 2KB) |
+| `src/hardware/cpu_base.h` | CRTP base with single `Memory mem_` |
+| `src/hardware/cpu.cpp` | Simple CPU using `mem_.icache()` / `mem_.dcache()` |
+| `src/hardware/pipelined_cpu.cpp` | Pipeline using same chaining pattern |
 
 ## Phase 4: Memory Hierarchy
 

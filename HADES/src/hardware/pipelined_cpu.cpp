@@ -8,16 +8,12 @@ void PipelinedCPU::reset() {
     for (int i = 0; i < 32; i++) regs_[i] = 0;
     pc_ = 0x1000;
     halted_ = false;
-    cache_enabled_ = false;
-    miss_penalty_ = 20;
     ifid_ = {};
     ex_ = {};
     memwb_ = {};
     perf_.reset();
     csrs_.clear();
-    mem_.clear();
-    icache_.reset();
-    dcache_.reset();
+    mem_.reset();
 }
 
 void PipelinedCPU::run(uint32_t max_instructions) {
@@ -79,40 +75,27 @@ void PipelinedCPU::stage_memory() {
         uint32_t addr = ex_.alu_result;
         uint32_t f3 = (ex_.instr >> 12) & 0x7;
 
-        if (cache_enabled_) {
-            if (!dcache_.access(addr)) {
-                uint32_t mem_lat = mem_.compute_latency(addr);
-                perf_.mcycle += miss_penalty_ + mem_lat;
-            }
-        } else if (mem_.is_enabled()) {
-            perf_.mcycle += mem_.compute_latency(addr);
-        }
-
         uint32_t val = 0;
         switch (f3) {
-            case 0b000: { int8_t b = (int8_t)mem_.read_byte(addr); val = (uint32_t)(int32_t)b; break; }
-            case 0b001: { int16_t h = (int16_t)mem_.read_half(addr); val = (uint32_t)(int32_t)h; break; }
-            case 0b010: val = mem_.read_word(addr); break;
-            case 0b100: val = mem_.read_byte(addr); break;
-            case 0b101: val = mem_.read_half(addr); break;
+            case 0b000: { int8_t b = (int8_t)mem_.dcache().read_byte(addr); val = (uint32_t)(int32_t)b; break; }
+            case 0b001: { int16_t h = (int16_t)mem_.dcache().read_half(addr); val = (uint32_t)(int32_t)h; break; }
+            case 0b010: val = mem_.dcache().read_word(addr); break;
+            case 0b100: val = mem_.dcache().read_byte(addr); break;
+            case 0b101: val = mem_.dcache().read_half(addr); break;
         }
+        perf_.mcycle += mem_.dcache().drain_penalty();
         memwb_.result = val;
     } else if (ex_.is_store) {
         uint32_t addr = ex_.alu_result;
         uint32_t f3 = (ex_.instr >> 12) & 0x7;
 
-        if (cache_enabled_) {
-            dcache_.write_access(addr);
-        }
-        if (mem_.is_enabled()) {
-            mem_.compute_latency(addr, true);
-        }
-
         switch (f3) {
-            case 0b000: mem_.write_byte(addr, ex_.rs2_val & 0xFF); break;
-            case 0b001: mem_.write_half(addr, ex_.rs2_val & 0xFFFF); break;
-            case 0b010: mem_.write_word(addr, ex_.rs2_val); break;
+            case 0b000: mem_.dcache().write_byte(addr, ex_.rs2_val & 0xFF); break;
+            case 0b001: mem_.dcache().write_half(addr, ex_.rs2_val & 0xFFFF); break;
+            case 0b010: mem_.dcache().write_word(addr, ex_.rs2_val); break;
         }
+        mem_.dcache().drain_penalty();
+
         memwb_.writes_rd = false;
     } else {
         memwb_.result = ex_.alu_result;
@@ -186,17 +169,9 @@ void PipelinedCPU::stage_execute() {
 void PipelinedCPU::stage_fetch_decode() {
     if (ex_.is_branch && ex_.branch_taken) return;
 
-    if (cache_enabled_) {
-        if (!icache_.access(pc_)) {
-            // Cache miss: pay miss penalty + memory hierarchy latency
-            uint32_t mem_lat = mem_.compute_latency(pc_);
-            perf_.mcycle += miss_penalty_ + mem_lat;
-        }
-    } else if (mem_.is_enabled()) {
-        perf_.mcycle += mem_.compute_latency(pc_);
-    }
+    ifid_.instr = mem_.icache().read_word(pc_);
+    perf_.mcycle += mem_.icache().drain_penalty();
 
-    ifid_.instr = mem_.read_word(pc_);
     ifid_.pc = pc_;
     ifid_.valid = true;
     pc_ += 4;
