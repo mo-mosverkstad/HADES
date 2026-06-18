@@ -1167,3 +1167,106 @@ cpu.get_sdram_row_misses()  # Number of accesses that required row activation
 ### 4.11 Design Limitation
 
 The current implementation does **not** model a separate large SDRAM address space. All addresses wrap to 64KB via `& (ONCHIP_SIZE - 1)`. The SDRAM path is a latency model only — there is no distinct data for addresses >= 0x10000. A future phase could extend `MemHierarchy` to support a larger backing store for realistic memory-mapped I/O or multi-level address spaces.
+
+## Architecture Decision: Python Driver vs C++ Native Driver
+
+### Why Python?
+
+HADES uses a **C++ engine + Python driver** architecture. The engine (CPU simulation, pipeline, cache, SDRAM) is compiled C++. Python is the controller that configures, invokes, and inspects results.
+
+This follows the same model as numpy/scipy/astropy: performance-critical inner loops in C/C++, scripting in Python for flexibility.
+
+### The Core Tradeoff
+
+```
+Edit → Result latency   vs   Run-time performance
+```
+
+When exploring side-channel behavior, the workflow is:
+1. Tweak an address or config
+2. Run simulation
+3. Observe timing difference
+4. Repeat
+
+With Python: edit → run (instant). With C++: edit → compile → link → run (2-5s each iteration).
+
+The run-time performance argument is irrelevant because **Python never touches the hot loop**. When `cpu.run()` is called, execution is in compiled C++ until it returns. Python overhead is microseconds around seconds of simulation — negligible.
+
+### Comparison
+
+| Aspect | Python Driver | C++ Native Driver |
+|--------|--------------|-------------------|
+| Edit → result | Instant (no compile) | 2-5s recompile |
+| Experiment scripting | 3-5 lines | 10-15 lines + recompile |
+| Simulation speed | C++ (same) | C++ (same) |
+| Dependencies | Python 3, pybind11 | None |
+| Distribution | .so + scripts + correct Python | Single binary |
+| REPL exploration | Natural (ipython, notebooks) | Not practical |
+| Debugging engine | Harder (cross-language) | Single debugger session |
+| Embedding in other tools | Requires Python runtime | Link as library |
+| CI simplicity | Needs Python env setup | Just compile and run |
+
+### When C++ Native Driver Makes Sense
+
+- **Embedding**: Linking HADES into another C++ project (FPGA test harness, formal verification tool)
+- **CI/CD hot path**: If test pipelines need minimal dependencies and fast startup
+- **Batch benchmarking**: Running millions of configurations where Python orchestration overhead accumulates
+- **Integration with C++ tooling**: Sanitizers, profilers, coverage that work better in pure C++ stacks
+
+### Architecture: Both Coexist
+
+```
+src/
+  hardware/        ← shared C++ engine (CPU, Memory, Pipeline)
+  bridge/          ← pybind11 bindings (Python driver path)
+  cli/             ← C++ main + encoder (native driver path, future)
+    main.cpp
+    encoder.h      ← instruction encoding (equivalent of riscvtools)
+  demos/           ← Python demo scripts
+  software/        ← Python tests
+```
+
+The Makefile supports both:
+```makefile
+engine:   # builds hades.so for Python driver
+native:   # builds standalone hades binary (future)
+```
+
+### C++ Native Interface (Future)
+
+A native driver would coexist with Python, sharing the same engine:
+
+```cpp
+// src/cli/main.cpp
+#include "pipelined_cpu.h"
+#include "encoder.h"   // C++ equivalent of riscvtools
+
+int main(int argc, char* argv[]) {
+    PipelinedCPU cpu;
+    cpu.set_mem_hierarchy_enabled(true);
+
+    auto prog = assemble({
+        lui(S0, 0x10000),
+        lbu(T0, S0, 0x000),
+        lbu(T1, S0, 0x001),
+        ecall()
+    });
+
+    cpu.load_program(prog);
+    cpu.run();
+
+    printf("Cycles: %lu\n", cpu.get_cycles());
+    printf("SDRAM row hits: %lu\n", cpu.get_sdram_row_hits());
+    return 0;
+}
+```
+
+Use cases for the native path:
+- Load and run `.bin` files compiled by the RISC-V toolchain (no encoding needed)
+- Batch parameter sweeps scripted in shell
+- Integration tests in CI without Python dependency
+- Hot-path co-simulation where another C++ component drives the CPU in a tight loop (e.g., fuzzing instruction sequences for timing leaks)
+
+### Decision
+
+**Python remains the primary driver** for interactive development, demos, and tests. A C++ native driver is planned for embedding/CI scenarios but is not blocking — the engine is already cleanly separated and can be linked from either path without modification.
