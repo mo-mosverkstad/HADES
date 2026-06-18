@@ -34,9 +34,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'build'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'layer4_software'))
 import hades
-from test_cpu import (encode_i, encode_r, to_bytes, ECALL,
-                      ZERO, T0, T1, T2, T3, T4, OP_IMM, OP_LOAD, OP_STORE, OP_REG)
-from aes_program import generate_aes128_program, generate_data, to_bytes as aes_to_bytes
+from riscvtools import *
 
 print("=" * 60)
 print("DEMO 06: Memory Hierarchy (On-chip RAM + SDRAM)")
@@ -60,13 +58,13 @@ prog = to_bytes([
 ])
 
 # Without memory hierarchy (flat, no latency)
-cpu1 = hades.CPU()
+cpu1 = hades.PipelinedCPU()
 cpu1.load_program(list(prog))
 cpu1.run()
 print(f"  Flat memory (no hierarchy): {cpu1.get_cycles()} cycles")
 
 # With memory hierarchy enabled (on-chip = 1 cycle per access)
-cpu2 = hades.CPU()
+cpu2 = hades.PipelinedCPU()
 cpu2.set_mem_hierarchy_enabled(True)
 cpu2.load_program(list(prog))
 cpu2.run()
@@ -74,46 +72,6 @@ print(f"  With hierarchy (on-chip):   {cpu2.get_cycles()} cycles")
 print(f"  SDRAM row hits:  {cpu2.get_sdram_row_hits()}")
 print(f"  SDRAM row misses: {cpu2.get_sdram_row_misses()}")
 print(f"  (All accesses in on-chip range → no SDRAM activity)")
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Part 2: Cache + Memory Hierarchy Combined
-# ═══════════════════════════════════════════════════════════════════════════
-
-print("\n--- Part 2: Cache + Memory Hierarchy (AES) ---")
-print("  Cache miss → must fetch from memory → latency depends on region")
-print("  On-chip miss: miss_penalty + 1 cycle")
-print("  SDRAM miss:   miss_penalty + 5-25 cycles\n")
-
-key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
-       0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c]
-plaintext = list(range(16))
-
-code = generate_aes128_program()
-binary = aes_to_bytes(code)
-data = generate_data(plaintext, key)
-
-# AES with cache only (no memory hierarchy)
-cpu3 = hades.CPU()
-cpu3.set_cache_enabled(True)
-cpu3.set_miss_penalty(20)
-cpu3.load_data(list(data), 0x0000)
-cpu3.load_program(list(binary), 0x1000)
-cpu3.run(500000)
-print(f"  AES (cache only, flat penalty=20):  {cpu3.get_cycles()} cycles")
-print(f"    D-cache misses: {cpu3.get_dcache_misses()}")
-
-# AES with cache + memory hierarchy
-cpu4 = hades.CPU()
-cpu4.set_cache_enabled(True)
-cpu4.set_miss_penalty(0)  # no flat penalty, use hierarchy latency instead
-cpu4.set_mem_hierarchy_enabled(True)
-cpu4.load_data(list(data), 0x0000)
-cpu4.load_program(list(binary), 0x1000)
-cpu4.run(500000)
-print(f"  AES (cache + mem hierarchy):        {cpu4.get_cycles()} cycles")
-print(f"    D-cache misses: {cpu4.get_dcache_misses()}")
-print(f"    SDRAM row hits:  {cpu4.get_sdram_row_hits()}")
-print(f"    SDRAM row misses: {cpu4.get_sdram_row_misses()}")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Part 3: Row Buffer Side-Channel
@@ -132,7 +90,7 @@ prog_seq = to_bytes([
     ECALL,
 ])
 
-cpu5 = hades.CPU()
+cpu5 = hades.PipelinedCPU()
 cpu5.set_mem_hierarchy_enabled(True)
 cpu5.load_program(list(prog_seq))
 cpu5.run()
@@ -150,7 +108,7 @@ prog_spread = to_bytes([
     ECALL,
 ])
 
-cpu6 = hades.CPU()
+cpu6 = hades.PipelinedCPU()
 cpu6.set_mem_hierarchy_enabled(True)
 cpu6.load_program(list(prog_spread))
 cpu6.run()
@@ -166,8 +124,4 @@ print(f"  This difference reveals the ACCESS PATTERN!")
 # ═══════════════════════════════════════════════════════════════════════════
 
 print(f"\n{'='*60}")
-print(f"✅ Demo 06 complete.")
-print(f"\n💡 Security insight: Memory access patterns create timing")
-print(f"   differences even WITHOUT cache. SDRAM row buffer effects")
-print(f"   amplify the signal. Combined with cache misses, the total")
-print(f"   timing leakage is significant and exploitable.")
+print(f" Demo 06 complete.")
