@@ -14,8 +14,8 @@ void CPU::reset() {
 void CPU::run(uint32_t max_instructions) {
     uint32_t count = 0;
     while (!halted_ && count < max_instructions) {
-        uint32_t instr = mem_.icache().read_word(pc_);
-        cycles_ += mem_.icache().drain_penalty();
+        uint32_t instr = mem_.imem().read_word(pc_);
+        cycles_ += mem_.imem().drain_penalty();
 
         execute(instr);
         cycles_++;
@@ -73,13 +73,13 @@ void CPU::execute(uint32_t instr) {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_i;
         uint32_t val = 0;
         switch (d.funct3) {
-            case 0b000: val = (uint32_t)(int32_t)(int8_t)mem_.dcache().read_byte(addr); break;
-            case 0b001: val = (uint32_t)(int32_t)(int16_t)mem_.dcache().read_half(addr); break;
-            case 0b010: val = mem_.dcache().read_word(addr); break;
-            case 0b100: val = mem_.dcache().read_byte(addr); break;
-            case 0b101: val = mem_.dcache().read_half(addr); break;
+            case 0b000: val = (uint32_t)(int32_t)(int8_t)mem_.dmem().read_byte(addr); break;
+            case 0b001: val = (uint32_t)(int32_t)(int16_t)mem_.dmem().read_half(addr); break;
+            case 0b010: val = mem_.dmem().read_word(addr); break;
+            case 0b100: val = mem_.dmem().read_byte(addr); break;
+            case 0b101: val = mem_.dmem().read_half(addr); break;
         }
-        cycles_ += mem_.dcache().drain_penalty();
+        cycles_ += mem_.dmem().drain_penalty();
         write_reg(d.rd, val);
         pc_ += 4;
         break;
@@ -88,11 +88,11 @@ void CPU::execute(uint32_t instr) {
     case OP_STORE: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_s;
         switch (d.funct3) {
-            case 0b000: mem_.dcache().write_byte(addr, regs_[d.rs2] & 0xFF); break;
-            case 0b001: mem_.dcache().write_half(addr, regs_[d.rs2] & 0xFFFF); break;
-            case 0b010: mem_.dcache().write_word(addr, regs_[d.rs2]); break;
+            case 0b000: mem_.dmem().write_byte(addr, regs_[d.rs2] & 0xFF); break;
+            case 0b001: mem_.dmem().write_half(addr, regs_[d.rs2] & 0xFFFF); break;
+            case 0b010: mem_.dmem().write_word(addr, regs_[d.rs2]); break;
         }
-        mem_.dcache().drain_penalty();
+        mem_.dmem().drain_penalty();
         pc_ += 4;
         break;
     }

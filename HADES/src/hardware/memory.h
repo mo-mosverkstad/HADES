@@ -4,33 +4,36 @@
 #include "cache.h"
 #include "mem_hierarchy.h"
 
-// MemoryPort: One access path (instruction or data) with its own cache.
-// Owned by the Memory composite. Not used standalone.
+// MemoryPort: One access path into the memory subsystem.
+// Internally holds a cache and references the shared backing store.
+// The CPU doesn't know or care about caches — it just reads/writes.
 
 class MemoryPort {
 public:
-    explicit MemoryPort(MemHierarchy& mem) : mem_(mem) {}
+    explicit MemoryPort(MemHierarchy& backing) : backing_(backing) {}
 
-    uint8_t read_byte(uint32_t addr) { account_read(addr); return mem_.read_byte(addr); }
-    uint16_t read_half(uint32_t addr) { account_read(addr); return mem_.read_half(addr); }
-    uint32_t read_word(uint32_t addr) { account_read(addr); return mem_.read_word(addr); }
+    uint8_t read_byte(uint32_t addr) { account_read(addr); return backing_.read_byte(addr); }
+    uint16_t read_half(uint32_t addr) { account_read(addr); return backing_.read_half(addr); }
+    uint32_t read_word(uint32_t addr) { account_read(addr); return backing_.read_word(addr); }
 
-    void write_byte(uint32_t addr, uint8_t val) { account_write(addr); mem_.write_byte(addr, val); }
-    void write_half(uint32_t addr, uint16_t val) { account_write(addr); mem_.write_half(addr, val); }
-    void write_word(uint32_t addr, uint32_t val) { account_write(addr); mem_.write_word(addr, val); }
+    void write_byte(uint32_t addr, uint8_t val) { account_write(addr); backing_.write_byte(addr, val); }
+    void write_half(uint32_t addr, uint16_t val) { account_write(addr); backing_.write_half(addr, val); }
+    void write_word(uint32_t addr, uint32_t val) { account_write(addr); backing_.write_word(addr, val); }
 
     uint32_t drain_penalty() { uint32_t p = penalty_; penalty_ = 0; return p; }
 
+    // Configuration (called by Memory composite, not by CPU)
     void set_cache_enabled(bool enabled) { cache_enabled_ = enabled; }
     void set_miss_penalty(uint32_t cycles) { miss_penalty_ = cycles; }
 
+    // Stats
     uint64_t get_cache_misses() const { return cache_.get_misses(); }
     uint64_t get_cache_hits() const { return cache_.get_hits(); }
 
     void reset() { cache_.reset(); penalty_ = 0; }
 
 private:
-    MemHierarchy& mem_;
+    MemHierarchy& backing_;
     Cache cache_;
     bool cache_enabled_ = false;
     uint32_t miss_penalty_ = 20;
@@ -39,39 +42,32 @@ private:
     void account_read(uint32_t addr) {
         if (cache_enabled_) {
             if (!cache_.access(addr))
-                penalty_ += miss_penalty_ + mem_.compute_latency(addr);
-        } else if (mem_.is_enabled()) {
-            penalty_ += mem_.compute_latency(addr);
+                penalty_ += miss_penalty_ + backing_.compute_latency(addr);
+        } else if (backing_.is_enabled()) {
+            penalty_ += backing_.compute_latency(addr);
         }
     }
 
     void account_write(uint32_t addr) {
         if (cache_enabled_) cache_.write_access(addr);
-        if (mem_.is_enabled()) mem_.compute_latency(addr, true);
+        if (backing_.is_enabled()) backing_.compute_latency(addr, true);
     }
 };
 
-// Memory: Composite owning the entire memory subsystem.
-// CPUBase holds a single Memory instance. Access via chaining:
-//   mem_.icache().read_word(pc_)
-//   mem_.dcache().read_word(addr)
-//   mem_.sdram().get_row_hits()
+// Memory: The entire memory subsystem as seen by the processor.
+// Exposes two ports: imem (instruction) and dmem (data).
+// Caches, hierarchy, SDRAM — all internal details.
 
 class Memory {
 public:
-    Memory() : icache_(hierarchy_), dcache_(hierarchy_) {}
+    Memory() : imem_(hierarchy_), dmem_(hierarchy_) {}
 
-    // ─── Port access (chaining) ─────────────────────────────────────────
+    // ─── Port access (what the CPU sees) ────────────────────────────────
 
-    MemoryPort& icache() { return icache_; }
-    MemoryPort& dcache() { return dcache_; }
-    const MemoryPort& icache() const { return icache_; }
-    const MemoryPort& dcache() const { return dcache_; }
-
-    // ─── SDRAM stats/config ─────────────────────────────────────────────
-
-    SDRAMModel& sdram() { return hierarchy_.sdram(); }
-    const SDRAMModel& sdram() const { return hierarchy_.sdram(); }
+    MemoryPort& imem() { return imem_; }
+    MemoryPort& dmem() { return dmem_; }
+    const MemoryPort& imem() const { return imem_; }
+    const MemoryPort& dmem() const { return dmem_; }
 
     // ─── Global configuration ───────────────────────────────────────────
 
@@ -79,14 +75,19 @@ public:
     bool is_hierarchy_enabled() const { return hierarchy_.is_enabled(); }
 
     void set_miss_penalty(uint32_t cycles) {
-        icache_.set_miss_penalty(cycles);
-        dcache_.set_miss_penalty(cycles);
+        imem_.set_miss_penalty(cycles);
+        dmem_.set_miss_penalty(cycles);
     }
 
     void set_cache_enabled(bool enabled) {
-        icache_.set_cache_enabled(enabled);
-        dcache_.set_cache_enabled(enabled);
+        imem_.set_cache_enabled(enabled);
+        dmem_.set_cache_enabled(enabled);
     }
+
+    // ─── Stats (exposed for Python bindings) ────────────────────────────
+
+    SDRAMModel& sdram() { return hierarchy_.sdram(); }
+    const SDRAMModel& sdram() const { return hierarchy_.sdram(); }
 
     // ─── Direct access (bypasses cache, for program/data loading) ───────
 
@@ -97,12 +98,12 @@ public:
 
     void reset() {
         hierarchy_.clear();
-        icache_.reset();
-        dcache_.reset();
+        imem_.reset();
+        dmem_.reset();
     }
 
 private:
     MemHierarchy hierarchy_;
-    MemoryPort icache_;
-    MemoryPort dcache_;
+    MemoryPort imem_;
+    MemoryPort dmem_;
 };

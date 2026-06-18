@@ -26,14 +26,14 @@ public:
         return mem_.dump(addr, len);
     }
 
-    // Configuration — delegated to composite
+    // Configuration
     void set_cache_enabled(bool enabled) { mem_.set_cache_enabled(enabled); }
     void set_miss_penalty(uint32_t cycles) { mem_.set_miss_penalty(cycles); }
     void set_mem_hierarchy_enabled(bool enabled) { mem_.set_hierarchy_enabled(enabled); }
 
     // Stats
-    uint64_t get_icache_misses() const { return mem_.icache().get_cache_misses(); }
-    uint64_t get_dcache_misses() const { return mem_.dcache().get_cache_misses(); }
+    uint64_t get_icache_misses() const { return mem_.imem().get_cache_misses(); }
+    uint64_t get_dcache_misses() const { return mem_.dmem().get_cache_misses(); }
     uint64_t get_sdram_row_hits() const { return mem_.sdram().get_row_hits(); }
     uint64_t get_sdram_row_misses() const { return mem_.sdram().get_row_misses(); }
 

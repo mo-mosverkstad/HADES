@@ -77,24 +77,24 @@ void PipelinedCPU::stage_memory() {
 
         uint32_t val = 0;
         switch (f3) {
-            case 0b000: { int8_t b = (int8_t)mem_.dcache().read_byte(addr); val = (uint32_t)(int32_t)b; break; }
-            case 0b001: { int16_t h = (int16_t)mem_.dcache().read_half(addr); val = (uint32_t)(int32_t)h; break; }
-            case 0b010: val = mem_.dcache().read_word(addr); break;
-            case 0b100: val = mem_.dcache().read_byte(addr); break;
-            case 0b101: val = mem_.dcache().read_half(addr); break;
+            case 0b000: { int8_t b = (int8_t)mem_.dmem().read_byte(addr); val = (uint32_t)(int32_t)b; break; }
+            case 0b001: { int16_t h = (int16_t)mem_.dmem().read_half(addr); val = (uint32_t)(int32_t)h; break; }
+            case 0b010: val = mem_.dmem().read_word(addr); break;
+            case 0b100: val = mem_.dmem().read_byte(addr); break;
+            case 0b101: val = mem_.dmem().read_half(addr); break;
         }
-        perf_.mcycle += mem_.dcache().drain_penalty();
+        perf_.mcycle += mem_.dmem().drain_penalty();
         memwb_.result = val;
     } else if (ex_.is_store) {
         uint32_t addr = ex_.alu_result;
         uint32_t f3 = (ex_.instr >> 12) & 0x7;
 
         switch (f3) {
-            case 0b000: mem_.dcache().write_byte(addr, ex_.rs2_val & 0xFF); break;
-            case 0b001: mem_.dcache().write_half(addr, ex_.rs2_val & 0xFFFF); break;
-            case 0b010: mem_.dcache().write_word(addr, ex_.rs2_val); break;
+            case 0b000: mem_.dmem().write_byte(addr, ex_.rs2_val & 0xFF); break;
+            case 0b001: mem_.dmem().write_half(addr, ex_.rs2_val & 0xFFFF); break;
+            case 0b010: mem_.dmem().write_word(addr, ex_.rs2_val); break;
         }
-        mem_.dcache().drain_penalty();
+        mem_.dmem().drain_penalty();
 
         memwb_.writes_rd = false;
     } else {
@@ -169,8 +169,8 @@ void PipelinedCPU::stage_execute() {
 void PipelinedCPU::stage_fetch_decode() {
     if (ex_.is_branch && ex_.branch_taken) return;
 
-    ifid_.instr = mem_.icache().read_word(pc_);
-    perf_.mcycle += mem_.icache().drain_penalty();
+    ifid_.instr = mem_.imem().read_word(pc_);
+    perf_.mcycle += mem_.imem().drain_penalty();
 
     ifid_.pc = pc_;
     ifid_.valid = true;
