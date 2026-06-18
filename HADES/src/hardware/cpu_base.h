@@ -33,9 +33,9 @@ public:
     uint64_t get_icache_misses() const { return icache_.get_misses(); }
     uint64_t get_dcache_misses() const { return dcache_.get_misses(); }
 
-    void set_mem_hierarchy_enabled(bool enabled);
-    uint64_t get_sdram_row_hits() const;
-    uint64_t get_sdram_row_misses() const;
+    void set_mem_hierarchy_enabled(bool enabled) { mem_.set_enabled(enabled); }
+    uint64_t get_sdram_row_hits() const { return mem_.sdram().get_row_hits(); }
+    uint64_t get_sdram_row_misses() const { return mem_.sdram().get_row_misses(); }
 
 protected:
     uint32_t regs_[32]{};

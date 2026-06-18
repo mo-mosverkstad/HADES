@@ -937,87 +937,188 @@ private:
 
 ## Phase 4: Memory Hierarchy
 
-### 4.1 Architecture (`layer1_hardware/include/mem_hierarchy.h`)
+### 4.1 Overview
 
-Replaces the flat `Memory` class with a hierarchy controller:
+Phase 4 replaces the flat `Memory` class with `MemHierarchy` — a unified memory controller that models realistic latency differences between on-chip RAM and off-chip SDRAM. The hierarchy is **disabled by default** for backward compatibility; when disabled, all accesses behave identically to the old flat 64KB memory.
+
+### 4.2 File Structure
+
+| File | Role |
+|------|------|
+| `src/hardware/mem_hierarchy.h` | `MemHierarchy` controller + `SDRAMModel` class |
+| `src/hardware/cpu_base.h` | CRTP base holds `MemHierarchy mem_` (replaces old `Memory`) |
+| `src/hardware/pipelined_cpu.cpp` | Integrates latency into pipeline stages (fetch + memory) |
+| `src/bridge/bindings.cpp` | Exposes `set_mem_hierarchy_enabled`, `get_sdram_row_*` to Python |
+
+### 4.3 Class Design
 
 ```
-CPU request
-    │
-    ├─ addr < 0x10000? → On-chip RAM (1 cycle)
-    │
-    └─ addr >= 0x10000? → SDRAM model (5-25 cycles)
+CPUBase<PipelinedCPU>
+  │
+  └─ MemHierarchy mem_          (replaces old Memory)
+       │
+       ├─ data_: vector<uint8_t>   (64KB flat storage, always used for actual data)
+       ├─ enabled_: bool           (latency modeling on/off)
+       ├─ onchip_latency_: uint32_t (default: 1 cycle)
+       │
+       └─ SDRAMModel sdram_
+            ├─ current_row_: uint32_t   (tracks open row)
+            ├─ row_bits_: uint32_t      (default: 10 → 1KB rows)
+            ├─ row_hit_latency_: uint32_t  (default: 5 cycles)
+            ├─ row_miss_latency_: uint32_t (default: 25 cycles)
+            ├─ refresh_interval_: uint32_t (default: every 10000 accesses)
+            └─ refresh_latency_: uint32_t  (default: 50 cycles)
 ```
 
-The `MemHierarchy` class provides the same read/write interface as the old `Memory` class but adds a `compute_latency(addr)` method that returns the access time.
+Key design decision: `MemHierarchy` keeps the **same flat 64KB data store** regardless of hierarchy mode. The hierarchy only affects **latency computation**, not actual data routing. This means addresses always wrap with `& 0xFFFF` — the simulator does not model a larger address space.
 
-### 4.2 SDRAM Row Buffer Model
+### 4.4 Address Routing and Latency Model
 
-SDRAM is organized into rows. The controller tracks which row is currently "open":
+```
+MemHierarchy::compute_latency(addr)
+    │
+    ├─ hierarchy disabled? → return 0 (no extra cycles)
+    │
+    ├─ addr < 0x10000? → return onchip_latency_ (1 cycle)
+    │
+    └─ addr >= 0x10000? → SDRAMModel::access_latency(addr)
+                            │
+                            ├─ same row as last access? → row_hit_latency_ (5 cycles)
+                            ├─ different row?           → row_miss_latency_ (25 cycles)
+                            │
+                            └─ + refresh_latency_ (50 cycles) if access_count % 10000 == 0
+```
+
+**Important**: Since all data wraps to 64KB, addresses >= 0x10000 still read/write from the same array. The SDRAM path is a latency model only — there is no distinct data for addresses >= 0x10000. In practice, the program counter lives at 0x1000 (on-chip range) and data loads can target any address.
+
+### 4.5 Pipeline Integration
+
+The latency is charged at two points in `pipelined_cpu.cpp`:
+
+**1. Instruction Fetch (`stage_fetch_decode`)**
+
+```cpp
+if (cache_enabled_) {
+    if (!icache_.access(pc_)) {
+        perf_.mcycle += miss_penalty_ + mem_.compute_latency(pc_);
+    }
+} else if (mem_.is_enabled()) {
+    perf_.mcycle += mem_.compute_latency(pc_);  // every fetch pays latency
+}
+```
+
+When hierarchy is enabled without cache, **every** instruction fetch adds `onchip_latency_` (1 cycle) to the cycle count. This is realistic: even on-chip SRAM has non-zero access time.
+
+**2. Data Load (`stage_memory`)**
+
+```cpp
+if (cache_enabled_) {
+    if (!dcache_.access(addr)) {
+        perf_.mcycle += miss_penalty_ + mem_.compute_latency(addr);
+    }
+} else if (mem_.is_enabled()) {
+    perf_.mcycle += mem_.compute_latency(addr);  // every load pays latency
+}
+```
+
+**3. Data Store (`stage_memory`)**
+
+```cpp
+if (mem_.is_enabled()) {
+    mem_.compute_latency(addr, true);  // updates SDRAM row state, no stall added
+}
+```
+
+Stores update the SDRAM row buffer state (so subsequent reads from the same row get hits) but do NOT add stall cycles — this models a write buffer.
+
+### 4.6 Cycle Accounting Example
+
+Given 4 load instructions + ECALL (5 instructions total), all addresses < 0x10000:
+
+| Source | Count | Latency each | Total |
+|--------|-------|-------------|-------|
+| Base pipeline execution | — | — | 8 cycles |
+| Instruction fetches (hierarchy) | 5 | 1 cycle | +5 cycles |
+| Data loads (hierarchy) | 4 | 1 cycle | +4 cycles |
+| ECALL fetch (already counted above) | — | — | +1 cycle |
+| **Total** | | | **18 cycles** |
+
+With SDRAM-range accesses to different rows: each load pays 25 cycles instead of 1, creating dramatic timing differences.
+
+### 4.7 SDRAM Row Buffer Model Details
+
+The `SDRAMModel` simulates row-buffer locality:
 
 ```cpp
 uint32_t SDRAMModel::access_latency(uint32_t addr) {
-    uint32_t row = addr >> row_bits_;  // default: 1KB rows
+    access_count_++;
+    cycle_counter_++;
 
+    // Periodic refresh stall
+    uint32_t refresh_penalty = 0;
+    if (cycle_counter_ % refresh_interval_ == 0) {
+        refresh_penalty = refresh_latency_;  // 50 cycles
+    }
+
+    // Row buffer check
+    uint32_t row = addr >> row_bits_;  // row = addr >> 10 → 1KB rows
     if (row == current_row_) {
         row_hits_++;
-        return 5;   // row hit: fast
+        return row_hit_latency_ + refresh_penalty;   // 5 + 0|50
     } else {
         current_row_ = row;
         row_misses_++;
-        return 25;  // row miss: slow (activate new row)
+        return row_miss_latency_ + refresh_penalty;  // 25 + 0|50
     }
 }
 ```
 
-### 4.3 Refresh
+Default row size = `1 << row_bits_` = 1024 bytes. Two addresses are in the same row if `addr >> 10` is equal. This means:
+- 0x100, 0x101, 0x1FF → same row (row 0)
+- 0x100, 0x500 → different rows (row 0 vs row 1)
 
-Real SDRAM must be periodically refreshed (data decays). During refresh, the memory is unavailable:
+### 4.8 Interaction with Cache (Phase 3 + Phase 4)
 
-```cpp
-if (cycle_counter_ % refresh_interval_ == 0) {
-    refresh_penalty = 50;  // stall
-}
-```
+Three operational modes for any memory access:
 
-This introduces non-deterministic timing jitter — realistic noise source.
+| Cache | Hierarchy | Behavior |
+|-------|-----------|----------|
+| OFF | OFF | No extra latency (flat, Phase 1-2 behavior) |
+| OFF | ON | Every access pays `compute_latency()` |
+| ON | OFF | Miss pays `miss_penalty_` only |
+| ON | ON | Miss pays `miss_penalty_ + compute_latency()` |
 
-### 4.4 Combined Latency Path
+The combined mode (cache ON + hierarchy ON) is the most realistic:
+- Cache hits: 0 extra cycles (data served from L1)
+- Cache miss to on-chip: miss_penalty(20) + 1 = 21 cycles
+- Cache miss to SDRAM row hit: miss_penalty(20) + 5 = 25 cycles
+- Cache miss to SDRAM row miss: miss_penalty(20) + 25 = 45 cycles
 
-When cache is enabled AND memory hierarchy is enabled:
+### 4.9 Security Relevance
 
-```
-Load instruction
-    │
-    ├─ D-Cache hit? → 0 extra cycles (data in cache)
-    │
-    └─ D-Cache miss? → miss_penalty + memory_hierarchy_latency
-                        │
-                        ├─ On-chip? → + 1 cycle
-                        └─ SDRAM?   → + 5 (row hit) or + 25 (row miss)
-```
+The SDRAM row buffer creates a **memory access pattern side-channel** independent of cache:
 
-Total worst case: miss_penalty(20) + row_miss(25) = 45 cycles for a single load.
+1. **Row-buffer timing attack**: Sequential access (same row) completes in 5 cycles; scattered access (different rows) takes 25 cycles. An attacker measuring total execution time can distinguish access patterns.
 
-### 4.5 Security Relevance
+2. **Refresh-based jitter**: The periodic 50-cycle refresh stall occurs at fixed intervals, adding noise to timing measurements but also creating a deterministic marker.
 
-The SDRAM row buffer creates a **memory access pattern side-channel**:
-- Sequential access (same row): fast → low cycle count
-- Random access (different rows): slow → high cycle count
+3. **Combined with cache**: Even with L1 cache, cold misses during cryptographic operations hit the SDRAM model and leak the order/pattern of memory accesses through row hit/miss ratios.
 
-An attacker measuring total execution time can distinguish:
-- AES with sequential S-box lookups (e.g., key=0 → accesses 0x100..0x10F)
-- AES with scattered S-box lookups (e.g., random key → accesses spread across rows)
+This is exploitable for:
+- Distinguishing AES key values (different keys → different S-box access patterns → different row hit rates)
+- Detecting which code path was taken (branch leads to different data access sequence)
 
-This is exploitable even WITHOUT cache — the row buffer alone leaks information.
-
-### 4.6 Configuration
-
-All features are disabled by default for backward compatibility:
+### 4.10 Python API
 
 ```python
-cpu.set_miss_penalty(20)             # cycles on cache miss
-cpu.set_mem_hierarchy_enabled(True)  # Phase 4
+cpu = hades.PipelinedCPU()
+cpu.set_mem_hierarchy_enabled(True)   # Enable latency model
+
+# After execution:
+cpu.get_sdram_row_hits()    # Number of accesses that hit the open row
+cpu.get_sdram_row_misses()  # Number of accesses that required row activation
 ```
 
-Enabling both gives the most realistic (and most attackable) timing model.
+### 4.11 Design Limitation
+
+The current implementation does **not** model a separate large SDRAM address space. All addresses wrap to 64KB via `& (ONCHIP_SIZE - 1)`. The SDRAM path is a latency model only — there is no distinct data for addresses >= 0x10000. A future phase could extend `MemHierarchy` to support a larger backing store for realistic memory-mapped I/O or multi-level address spaces.
