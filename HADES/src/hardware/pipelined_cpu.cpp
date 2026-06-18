@@ -81,8 +81,11 @@ void PipelinedCPU::stage_memory() {
 
         if (cache_enabled_) {
             if (!dcache_.access(addr)) {
-                perf_.mcycle += miss_penalty_;
+                uint32_t mem_lat = mem_.compute_latency(addr);
+                perf_.mcycle += miss_penalty_ + mem_lat;
             }
+        } else if (mem_.is_enabled()) {
+            perf_.mcycle += mem_.compute_latency(addr);
         }
 
         uint32_t val = 0;
@@ -100,6 +103,9 @@ void PipelinedCPU::stage_memory() {
 
         if (cache_enabled_) {
             dcache_.write_access(addr);
+        }
+        if (mem_.is_enabled()) {
+            mem_.compute_latency(addr, true);
         }
 
         switch (f3) {
@@ -182,8 +188,12 @@ void PipelinedCPU::stage_fetch_decode() {
 
     if (cache_enabled_) {
         if (!icache_.access(pc_)) {
-            perf_.mcycle += miss_penalty_;
+            // Cache miss: pay miss penalty + memory hierarchy latency
+            uint32_t mem_lat = mem_.compute_latency(pc_);
+            perf_.mcycle += miss_penalty_ + mem_lat;
         }
+    } else if (mem_.is_enabled()) {
+        perf_.mcycle += mem_.compute_latency(pc_);
     }
 
     ifid_.instr = mem_.read_word(pc_);

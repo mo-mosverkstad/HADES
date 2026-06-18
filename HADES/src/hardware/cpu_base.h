@@ -3,6 +3,7 @@
 #include <vector>
 #include "memory.h"
 #include "cache.h"
+#include "mem_hierarchy.h"
 
 // CRTP base providing common CPU state and accessor implementations.
 template<typename Derived>
@@ -32,11 +33,16 @@ public:
     uint64_t get_icache_misses() const { return icache_.get_misses(); }
     uint64_t get_dcache_misses() const { return dcache_.get_misses(); }
 
+    void set_mem_hierarchy_enabled(bool enabled);
+    uint64_t get_sdram_row_hits() const;
+    uint64_t get_sdram_row_misses() const;
+
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
     bool halted_ = false;
-    Memory mem_;
+    // Memory mem_;
+    MemHierarchy mem_;
 
     Cache icache_;
     Cache dcache_;

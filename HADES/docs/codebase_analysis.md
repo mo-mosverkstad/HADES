@@ -934,3 +934,90 @@ private:
 
 - **Do the facade** if the memory hierarchy will grow (L2, bus contention, NUMA).
 - **Keep current design** if the simulator stays at L1-only and pedagogic visibility of cache behavior matters more than code elegance.
+
+## Phase 4: Memory Hierarchy
+
+### 4.1 Architecture (`layer1_hardware/include/mem_hierarchy.h`)
+
+Replaces the flat `Memory` class with a hierarchy controller:
+
+```
+CPU request
+    │
+    ├─ addr < 0x10000? → On-chip RAM (1 cycle)
+    │
+    └─ addr >= 0x10000? → SDRAM model (5-25 cycles)
+```
+
+The `MemHierarchy` class provides the same read/write interface as the old `Memory` class but adds a `compute_latency(addr)` method that returns the access time.
+
+### 4.2 SDRAM Row Buffer Model
+
+SDRAM is organized into rows. The controller tracks which row is currently "open":
+
+```cpp
+uint32_t SDRAMModel::access_latency(uint32_t addr) {
+    uint32_t row = addr >> row_bits_;  // default: 1KB rows
+
+    if (row == current_row_) {
+        row_hits_++;
+        return 5;   // row hit: fast
+    } else {
+        current_row_ = row;
+        row_misses_++;
+        return 25;  // row miss: slow (activate new row)
+    }
+}
+```
+
+### 4.3 Refresh
+
+Real SDRAM must be periodically refreshed (data decays). During refresh, the memory is unavailable:
+
+```cpp
+if (cycle_counter_ % refresh_interval_ == 0) {
+    refresh_penalty = 50;  // stall
+}
+```
+
+This introduces non-deterministic timing jitter — realistic noise source.
+
+### 4.4 Combined Latency Path
+
+When cache is enabled AND memory hierarchy is enabled:
+
+```
+Load instruction
+    │
+    ├─ D-Cache hit? → 0 extra cycles (data in cache)
+    │
+    └─ D-Cache miss? → miss_penalty + memory_hierarchy_latency
+                        │
+                        ├─ On-chip? → + 1 cycle
+                        └─ SDRAM?   → + 5 (row hit) or + 25 (row miss)
+```
+
+Total worst case: miss_penalty(20) + row_miss(25) = 45 cycles for a single load.
+
+### 4.5 Security Relevance
+
+The SDRAM row buffer creates a **memory access pattern side-channel**:
+- Sequential access (same row): fast → low cycle count
+- Random access (different rows): slow → high cycle count
+
+An attacker measuring total execution time can distinguish:
+- AES with sequential S-box lookups (e.g., key=0 → accesses 0x100..0x10F)
+- AES with scattered S-box lookups (e.g., random key → accesses spread across rows)
+
+This is exploitable even WITHOUT cache — the row buffer alone leaks information.
+
+### 4.6 Configuration
+
+All features are disabled by default for backward compatibility:
+
+```python
+cpu.set_miss_penalty(20)             # cycles on cache miss
+cpu.set_mem_hierarchy_enabled(True)  # Phase 4
+```
+
+Enabling both gives the most realistic (and most attackable) timing model.

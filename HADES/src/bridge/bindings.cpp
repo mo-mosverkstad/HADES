@@ -43,5 +43,9 @@ PYBIND11_MODULE(hades, m) {
         .def("set_cache_enabled", &PipelinedCPU::set_cache_enabled, py::arg("enabled"))
         .def("set_miss_penalty", &PipelinedCPU::set_miss_penalty, py::arg("cycles"))
         .def("get_icache_misses", &PipelinedCPU::get_icache_misses)
-        .def("get_dcache_misses", &PipelinedCPU::get_dcache_misses);
+        .def("get_dcache_misses", &PipelinedCPU::get_dcache_misses)
+        .def("get_dcache_misses", &CPU::get_dcache_misses)
+        .def("set_mem_hierarchy_enabled", &CPU::set_mem_hierarchy_enabled, py::arg("enabled"))
+        .def("get_sdram_row_hits", &CPU::get_sdram_row_hits)
+        .def("get_sdram_row_misses", &CPU::get_sdram_row_misses);
 }

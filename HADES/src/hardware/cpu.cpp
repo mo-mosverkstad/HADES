@@ -74,8 +74,13 @@ void CPU::execute(uint32_t instr) {
     case OP_LOAD: {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_i;
         uint32_t val = 0;
-        if (cache_enabled_ && !dcache_.access(addr)) {
-            cycles_ += miss_penalty_;
+        if (cache_enabled_) {
+            if (!dcache_.access(addr)) {
+                uint32_t mem_lat = mem_.compute_latency(addr);
+                cycles_ += miss_penalty_ + mem_lat;
+            }
+        } else if (mem_.is_enabled()) {
+            cycles_ += mem_.compute_latency(addr);
         }
 
         switch (d.funct3) {
@@ -94,6 +99,9 @@ void CPU::execute(uint32_t instr) {
         uint32_t addr = regs_[d.rs1] + (uint32_t)d.imm_s;
         if (cache_enabled_) {
             dcache_.write_access(addr);
+        }
+        if (mem_.is_enabled()) {
+            mem_.compute_latency(addr, true);
         }
 
         switch (d.funct3) {
