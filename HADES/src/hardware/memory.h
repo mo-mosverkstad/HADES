@@ -3,6 +3,7 @@
 #include <vector>
 #include "cache.h"
 #include "mem_hierarchy.h"
+#include "io_bus.h"
 
 // MemoryPort: One access path into the memory subsystem.
 // Internally holds a cache and references the shared backing store.
@@ -10,9 +11,13 @@
 
 class MemoryPort {
 public:
-    explicit MemoryPort(MemHierarchy& backing) : backing_(backing) {}
+    explicit MemoryPort(MemHierarchy& backing, IOBus& io_bus) : backing_(backing), io_bus_(io_bus) {}
 
-    uint8_t read_byte(uint32_t addr) { account_read(addr); return backing_.read_byte(addr); }
+    uint8_t read_byte(uint32_t addr) {
+        account_read(addr);
+        if is_io(addr) return static_cast<uint8_t>(io_bus_.read(addr & ~0x3));
+        return backing_.read_byte(addr);
+    }
     uint16_t read_half(uint32_t addr) { account_read(addr); return backing_.read_half(addr); }
     uint32_t read_word(uint32_t addr) { account_read(addr); return backing_.read_word(addr); }
 
@@ -34,10 +39,16 @@ public:
 
 private:
     MemHierarchy& backing_;
+    IOBus& io_bus;
     Cache cache_;
+    
     bool cache_enabled_ = false;
     uint32_t miss_penalty_ = 20;
     uint32_t penalty_ = 0;
+
+    bool is_io(uint32_t addr) const {
+        return io_bus_.is_io_address(addr);
+    }
 
     void account_read(uint32_t addr) {
         if (cache_enabled_) {
@@ -60,7 +71,7 @@ private:
 
 class Memory {
 public:
-    Memory() : imem_(hierarchy_), dmem_(hierarchy_) {}
+    Memory(IOBus& io_bus) : imem_(hierarchy_), dmem_(hierarchy_), io_bus_(io_bus) {}
 
     // ─── Port access (what the CPU sees) ────────────────────────────────
 
@@ -104,6 +115,7 @@ public:
 
 private:
     MemHierarchy hierarchy_;
+    IOBus& io_bus_;
     MemoryPort imem_;
     MemoryPort dmem_;
 };

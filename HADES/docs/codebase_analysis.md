@@ -1270,3 +1270,199 @@ Use cases for the native path:
 ### Decision
 
 **Python remains the primary driver** for interactive development, demos, and tests. A C++ native driver is planned for embedding/CI scenarios but is not blocking — the engine is already cleanly separated and can be linked from either path without modification.
+
+
+## Phase 7: I/O Devices (Timer + UART + GPIO)
+
+### 7.1 I/O Bus Architecture (`layer1_hardware/include/io_bus.h`)
+
+Memory-mapped I/O uses the same load/store instructions as RAM access. The CPU doesn't know it's talking to a device — the I/O bus intercepts addresses >= 0xF000:
+
+```
+CPU executes: SW t0, 0(t3)    where t3 = 0xF020
+    │
+    ├─ addr < 0xF000? → normal memory (RAM/cache)
+    │
+    └─ addr >= 0xF000? → I/O Bus dispatches to device
+                              │
+                              ├─ 0xF000-0xF01F → Timer
+                              ├─ 0xF020-0xF03F → UART
+                              └─ 0xF040-0xF05F → GPIO
+```
+
+The `IODevice` base class defines the interface all devices must implement:
+
+```cpp
+class IODevice {
+public:
+    virtual uint32_t read(uint32_t offset) = 0;   // CPU reads register
+    virtual void write(uint32_t offset, uint32_t value) = 0; // CPU writes register
+    virtual void tick() = 0;           // called every CPU cycle
+    virtual bool irq_pending() = 0;    // device wants to interrupt
+};
+```
+
+### 7.2 Timer (`layer1_hardware/include/timer.h`)
+
+Matches DTEK-V interval timer specification.
+
+**Register map** (offsets from 0xF000):
+
+| Offset | Register | Function |
+|--------|----------|----------|
+| 0x00 | STATUS | bit 0: TO (timeout occurred). Write 0 to clear. |
+| 0x04 | CONTROL | bit 0: ITO (IRQ enable), bit 1: CONT, bit 2: START, bit 3: STOP |
+| 0x08 | PERIOD_LO | Countdown period (low 32 bits) |
+| 0x0C | PERIOD_HI | Countdown period (high 32 bits) |
+| 0x10 | SNAP_LO | Write triggers snapshot capture; read returns captured value |
+
+**Behavior:**
+```
+Each CPU cycle (tick()):
+    if running and counter > 0:
+        counter--
+    if counter == 0:
+        set TO flag
+        if CONT: reload counter from period
+        else: stop
+```
+
+### 7.3 UART (`layer1_hardware/include/uart.h`)
+
+Matches DTEK-V JTAG UART specification. Provides bidirectional communication between CPU and Python (host).
+
+**Register map** (offsets from 0xF020):
+
+| Offset | Register | Read | Write |
+|--------|----------|------|-------|
+| 0x00 | DATA | [7:0] byte, [15] RVALID, [31:16] RAVAIL | [7:0] byte to TX |
+| 0x04 | CONTROL | [0] RE, [1] WE, [8] RI, [9] WI, [10] AC, [31:16] WSPACE | [0] RE, [1] WE |
+
+**Data flow:**
+```
+Python (host)                          CPU (simulated)
+     │                                      │
+     │  cpu.uart_send([0x48, 0x69])         │
+     │  ─────────────────────────────►      │
+     │         (bytes go into RX FIFO)      │
+     │                                      │  LW t0, 0(uart_addr)  → pops 0x48
+     │                                      │  LW t1, 0(uart_addr)  → pops 0x69
+     │                                      │
+     │                                      │  SW t0, 0(uart_addr)  → pushes 0x48 to TX
+     │  output = cpu.uart_recv()            │
+     │  ◄─────────────────────────────      │
+     │         (reads TX output buffer)     │
+```
+
+### 7.4 GPIO (`layer1_hardware/include/gpio.h`)
+
+Matches DTEK-V PIO (Parallel I/O) specification.
+
+**Register map** (offsets from 0xF040):
+
+| Offset | Register | Function |
+|--------|----------|----------|
+| 0x00 | DATA | Read: input pin values. Write: output pin values. |
+| 0x04 | DIRECTION | 0=input, 1=output per bit |
+| 0x08 | INTERRUPTMASK | 1=enable IRQ for that bit |
+| 0x0C | EDGECAPTURE | 1=edge detected. Write 1 to clear. |
+
+**Edge detection:**
+```cpp
+void GPIO::tick() {
+    uint32_t changed = input_pins_ ^ prev_input_;
+    edge_capture_ |= changed;  // latch any transitions
+    prev_input_ = input_pins_;
+}
+```
+
+**Security relevance:**
+- GPIO toggle used as oscilloscope trigger (marks crypto start/end in trace)
+- Edge capture reveals timing of external events
+- In real attacks: attacker toggles GPIO pin → CPU starts AES → attacker captures power trace synchronized to the trigger
+
+### 7.5 CPU Integration
+
+The I/O bus is checked in both pipeline and single-cycle memory access paths:
+
+```cpp
+// In stage_memory() and execute_single_cycle():
+if (io_enabled_ && io_bus_.is_io_address(addr)) {
+    // Route to I/O device instead of RAM
+    result = io_bus_.read(addr);   // for loads
+    io_bus_.write(addr, value);    // for stores
+} else {
+    // Normal memory path (cache → memory hierarchy)
+}
+```
+
+Devices are ticked every CPU cycle:
+```cpp
+void CPU::pipeline_cycle() {
+    perf_.mcycle++;
+    if (io_enabled_) io_bus_.tick_all();  // all devices advance one cycle
+    ...
+}
+```
+
+I/O is auto-enabled when `uart_send()` or `gpio_set_input()` is called from Python, ensuring zero overhead when I/O is not used.
+
+### 7.6 Demo: `demo_07_io_devices.py`
+
+Demonstrates all three devices in one script:
+
+| Part | Device | What happens | Verification |
+|------|--------|-------------|-------------|
+| 1 | UART | Python sends 'H','i' → CPU reads and echoes → Python receives [72,105] | Bidirectional FIFO works |
+| 2 | GPIO | Python sets input=0xAA → CPU XORs with 0xFF → output=0x55 | Read/write routing correct |
+| 3 | Timer | Set period=100, start, do work, read snapshot | Countdown decrements |
+
+Run: `make demo-07`
+
+### 7.7 Full System with I/O (Updated Diagram)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ demos/                                                                   │
+│  demo_01 → demo_07                                                      │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │ import hades
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                        C++ Engine (build/hades.*.so)                     │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ CPU Core (3-stage pipeline)                                      │  │
+│  │   IF/ID → EX → MEM/WB                                           │  │
+│  │   forwarding, hazard detection                                   │  │
+│  └──────────────────────────┬───────────────────────────────────────┘  │
+│                             │ memory access                             │
+│                             ▼                                           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Address Router                                                    │  │
+│  │   addr < 0xF000? ──► Cache ──► Memory Hierarchy (RAM/SDRAM)     │  │
+│  │   addr >= 0xF000? ──► I/O Bus                                    │  │
+│  └──────────────────────────┬───────────────────────────────────────┘  │
+│                             │                                           │
+│            ┌────────────────┼────────────────┐                         │
+│            ▼                ▼                ▼                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                 │
+│  │    Timer     │  │    UART      │  │    GPIO      │                 │
+│  │   0xF000     │  │   0xF020     │  │   0xF040     │                 │
+│  │  countdown   │  │  FIFO TX/RX  │  │  pins I/O    │                 │
+│  │  IRQ on TO   │  │  host ↔ CPU  │  │  edge detect │                 │
+│  └──────────────┘  └──────────────┘  └──────────────┘                 │
+│            │                │                │                          │
+│            └────────────────┼────────────────┘                         │
+│                             │ irq_pending()                             │
+│                             ▼                                           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Leakage Engine (records power on every register write)           │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  Python API:                                                            │
+│    cpu.uart_send(bytes)     → push to RX FIFO                          │
+│    cpu.uart_recv()          → read TX output                           │
+│    cpu.gpio_set_input(val)  → set input pins                           │
+│    cpu.gpio_get_output()    → read output pins                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
