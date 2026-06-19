@@ -2,6 +2,7 @@
 #include <pybind11/stl.h>
 #include "cpu.h"
 #include "pipelined_cpu.h"
+#include "multicore.h"
 
 namespace py = pybind11;
 
@@ -65,4 +66,26 @@ PYBIND11_MODULE(hades, m) {
         .def("uart_recv", &PipelinedCPU::uart_recv)
         .def("gpio_set_input", &PipelinedCPU::gpio_set_input, py::arg("value"))
         .def("gpio_get_output", &PipelinedCPU::gpio_get_output);
+
+    py::class_<MultiCore>(m, "MultiCore")
+        .def(py::init<>())
+        .def("reset", &MultiCore::reset)
+        .def("load_program", &MultiCore::load_program,
+             py::arg("core_id"), py::arg("binary"), py::arg("base_addr"))
+        .def("load_data", &MultiCore::load_data,
+             py::arg("data"), py::arg("base_addr") = 0x0000)
+        .def("run", &MultiCore::run, py::arg("max_cycles") = 100000)
+        .def("get_reg", &MultiCore::get_reg, py::arg("core_id"), py::arg("idx"))
+        .def("get_cycles", &MultiCore::get_cycles, py::arg("core_id"))
+        .def("get_instret", &MultiCore::get_instret, py::arg("core_id"))
+        .def("get_global_cycles", &MultiCore::get_global_cycles)
+        .def("is_halted", &MultiCore::is_halted, py::arg("core_id"))
+        .def("read_mem", &MultiCore::read_mem, py::arg("addr"), py::arg("len"))
+        .def("get_mutex_contentions", &MultiCore::get_mutex_contentions)
+        .def("get_mutex_locked", &MultiCore::get_mutex_locked)
+        .def("get_mutex_owner", &MultiCore::get_mutex_owner)
+        .def("uart_send", &MultiCore::uart_send, py::arg("data"))
+        .def("uart_recv", &MultiCore::uart_recv)
+        .def("gpio_set_input", &MultiCore::gpio_set_input, py::arg("value"))
+        .def("gpio_get_output", &MultiCore::gpio_get_output);
 }

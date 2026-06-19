@@ -61,6 +61,9 @@ demo-04: engine
 demo-05: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_05_io_devices.py
 
+demo-06: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_06_multicore.py
+
 demo-all: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_01_basic_cpu.py
 	@echo ""
@@ -71,6 +74,8 @@ demo-all: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_04_memory_hierarchy.py
 	@echo ""
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_05_io_devices.py
+	@echo ""
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_06_multicore.py
 
 clean:
 	rm -rf $(BUILDDIR) src/programs/*.elf src/programs/*.bin

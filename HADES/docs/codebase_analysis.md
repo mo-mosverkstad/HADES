@@ -1272,9 +1272,9 @@ Use cases for the native path:
 **Python remains the primary driver** for interactive development, demos, and tests. A C++ native driver is planned for embedding/CI scenarios but is not blocking — the engine is already cleanly separated and can be linked from either path without modification.
 
 
-## Phase 7: I/O Devices (Timer + UART + GPIO)
+## Phase 5: I/O Devices (Timer + UART + GPIO)
 
-### 7.1 I/O Bus Architecture (`layer1_hardware/include/io_bus.h`)
+### 5.1 I/O Bus Architecture (`layer1_hardware/include/io_bus.h`)
 
 Memory-mapped I/O uses the same load/store instructions as RAM access. The CPU doesn't know it's talking to a device — the I/O bus intercepts addresses >= 0xF000:
 
@@ -1302,7 +1302,7 @@ public:
 };
 ```
 
-### 7.2 Timer (`layer1_hardware/include/timer.h`)
+### 5.2 Timer (`layer1_hardware/include/timer.h`)
 
 Matches DTEK-V interval timer specification.
 
@@ -1327,7 +1327,7 @@ Each CPU cycle (tick()):
         else: stop
 ```
 
-### 7.3 UART (`layer1_hardware/include/uart.h`)
+### 5.3 UART (`layer1_hardware/include/uart.h`)
 
 Matches DTEK-V JTAG UART specification. Provides bidirectional communication between CPU and Python (host).
 
@@ -1354,7 +1354,7 @@ Python (host)                          CPU (simulated)
      │         (reads TX output buffer)     │
 ```
 
-### 7.4 GPIO (`layer1_hardware/include/gpio.h`)
+### 5.4 GPIO (`layer1_hardware/include/gpio.h`)
 
 Matches DTEK-V PIO (Parallel I/O) specification.
 
@@ -1381,7 +1381,7 @@ void GPIO::tick() {
 - Edge capture reveals timing of external events
 - In real attacks: attacker toggles GPIO pin → CPU starts AES → attacker captures power trace synchronized to the trigger
 
-### 7.5 CPU Integration
+### 5.5 CPU Integration
 
 The I/O bus is checked in both pipeline and single-cycle memory access paths:
 
@@ -1407,7 +1407,7 @@ void CPU::pipeline_cycle() {
 
 I/O is auto-enabled when `uart_send()` or `gpio_set_input()` is called from Python, ensuring zero overhead when I/O is not used.
 
-### 7.6 Demo: `demo_07_io_devices.py`
+### 5.6 Demo: `demo_07_io_devices.py`
 
 Demonstrates all three devices in one script:
 
@@ -1419,50 +1419,232 @@ Demonstrates all three devices in one script:
 
 Run: `make demo-07`
 
-### 7.7 Full System with I/O (Updated Diagram)
+### 5.7 Full System with I/O (Updated Diagram)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ demos/                                                                   │
+│ demos/                                                                  │
 │  demo_01 → demo_07                                                      │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ import hades
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│                        C++ Engine (build/hades.*.so)                     │
+│                        C++ Engine (build/hades.*.so)                    │
 │                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ CPU Core (3-stage pipeline)                                      │  │
-│  │   IF/ID → EX → MEM/WB                                           │  │
-│  │   forwarding, hazard detection                                   │  │
-│  └──────────────────────────┬───────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ CPU Core (3-stage pipeline)                                      │   │
+│  │   IF/ID → EX → MEM/WB                                            │   │
+│  │   forwarding, hazard detection                                   │   │
+│  └──────────────────────────┬───────────────────────────────────────┘   │
 │                             │ memory access                             │
 │                             ▼                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Address Router                                                    │  │
-│  │   addr < 0xF000? ──► Cache ──► Memory Hierarchy (RAM/SDRAM)     │  │
-│  │   addr >= 0xF000? ──► I/O Bus                                    │  │
-│  └──────────────────────────┬───────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ Address Router                                                   │   │
+│  │   addr < 0xF000? ──► Cache ──► Memory Hierarchy (RAM/SDRAM)      │   │
+│  │   addr >= 0xF000? ──► I/O Bus                                    │   │
+│  └──────────────────────────┬───────────────────────────────────────┘   │
 │                             │                                           │
-│            ┌────────────────┼────────────────┐                         │
+│            ┌────────────────┼────────────────┐                          │
 │            ▼                ▼                ▼                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                 │
-│  │    Timer     │  │    UART      │  │    GPIO      │                 │
-│  │   0xF000     │  │   0xF020     │  │   0xF040     │                 │
-│  │  countdown   │  │  FIFO TX/RX  │  │  pins I/O    │                 │
-│  │  IRQ on TO   │  │  host ↔ CPU  │  │  edge detect │                 │
-│  └──────────────┘  └──────────────┘  └──────────────┘                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
+│  │    Timer     │  │    UART      │  │    GPIO      │                   │
+│  │   0xF000     │  │   0xF020     │  │   0xF040     │                   │
+│  │  countdown   │  │  FIFO TX/RX  │  │  pins I/O    │                   │
+│  │  IRQ on TO   │  │  host ↔ CPU  │  │  edge detect │                   │
+│  └──────────────┘  └──────────────┘  └──────────────┘                   │
 │            │                │                │                          │
-│            └────────────────┼────────────────┘                         │
+│            └────────────────┼────────────────┘                          │
 │                             │ irq_pending()                             │
 │                             ▼                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Leakage Engine (records power on every register write)           │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ Leakage Engine (records power on every register write)           │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  Python API:                                                            │
-│    cpu.uart_send(bytes)     → push to RX FIFO                          │
-│    cpu.uart_recv()          → read TX output                           │
-│    cpu.gpio_set_input(val)  → set input pins                           │
-│    cpu.gpio_get_output()    → read output pins                         │
+│    cpu.uart_send(bytes)     → push to RX FIFO                           │
+│    cpu.uart_recv()          → read TX output                            │
+│    cpu.gpio_set_input(val)  → set input pins                            │
+│    cpu.gpio_get_output()    → read output pins                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Phase 6: Multi-Core + Mutex
+
+### 6.1 Hardware Mutex (`layer1_hardware/include/mutex.h`)
+
+Implements DTEK-V hardware mutex with atomic test-and-set semantics. Beware that the mutex relies entirely on software cooperation and does not prevent a core from directly reading or writing shared memory. Programs are expected to acquire the mutex before accessing shared data and release it afterward. If a program ignores the mutex protocol, the hardware will not stop it, and race conditions can still occur.
+
+**Register** (at 0xF060):
+
+| Bits | Field | Meaning |
+|------|-------|---------|
+| [0] | VALUE | 0=unlocked, 1=locked |
+| [31:1] | OWNER | ID of the core that holds the lock |
+
+**Atomic lock acquisition:**
+```cpp
+void Mutex::write(uint32_t offset, uint32_t value) {
+    uint32_t new_owner = value >> 1;
+    bool new_value = (value & 1) != 0;
+
+    if (new_value) {
+        // Lock attempt
+        if (!locked_) {
+            locked_ = true;          // free → acquired
+            owner_ = new_owner;
+        } else if (owner_ != new_owner) {
+            contention_count_++;     // another core holds it → FAIL
+        }
+    } else {
+        // Unlock attempt (only owner can unlock)
+        if (locked_ && owner_ == new_owner) {
+            locked_ = false;
+            owner_ = 0;
+        }
+    }
+}
+```
+
+Key property: the write is **atomic** — only one core can succeed per cycle. The other gets a contention (write has no effect).
+
+### 6.2 Multi-Core Controller (`layer1_hardware/include/multicore.h`)
+
+Manages two CPU cores sharing a single memory and I/O bus.
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MultiCore Controller                         │
+│                                                                 │
+│  ┌──────────────────┐          ┌──────────────────┐             │
+│  │     Core 0       │          │     Core 1       │             │
+│  │  regs[32], PC    │          │  regs[32], PC    │             │
+│  │  I-cache, D-cache│          │  I-cache, D-cache│             │
+│  │  starts at 0x1000│          │  starts at 0x2000│             │
+│  └────────┬─────────┘          └─────────┬────────┘             │
+│           │                              │                      │
+│           └──────────────┬───────────────┘                      │
+│                          │ shared bus                           │
+│           ┌──────────────▼───────────────┐                      │
+│           │      Shared Resources        │                      │
+│           │                              │                      │
+│           │  ┌────────────────────────┐  │                      │
+│           │  │ Memory (64KB shared)   │  │                      │
+│           │  └────────────────────────┘  │                      │
+│           │                              │                      │
+│           │  ┌──────┐ ┌────┐ ┌────┐      │                      │
+│           │  │Timer │ │UART│ │GPIO│      │                      │
+│           │  └──────┘ └────┘ └────┘      │                      │
+│           │                              │                      │
+│           │  ┌────────────────────────┐  │                      │
+│           │  │ MUTEX (0xF060)         │  │                      │
+│           │  │ atomic test-and-set    │  │                      │
+│           │  └────────────────────────┘  │                      │
+│           └──────────────────────────────┘                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Execution model** (round-robin):
+```cpp
+void MultiCore::run(uint32_t max_cycles) {
+    for (uint32_t c = 0; c < max_cycles; c++) {
+        global_cycle_++;
+        if (!cores_[0].halted) step_core(0);  // Core 0 executes 1 instruction
+        if (!cores_[1].halted) step_core(1);  // Core 1 executes 1 instruction
+        io_bus_.tick_all();                   // Devices advance 1 cycle
+        if (cores_[0].halted && cores_[1].halted) break;
+    }
+}
+```
+
+Each core has its own `CoreState` with independent:
+- Register file (32 * uint32)
+- Program counter
+- L1 I-cache and D-cache
+- Cycle and instruction counters
+
+But they share:
+- Memory (both read/write the same 64KB)
+- I/O devices (Timer, UART, GPIO, Mutex)
+
+### 6.3 Mutex Protocol (Software Side)
+
+To acquire the lock, a core writes its ID and value=1:
+```asm
+# Core 0 (owner=1): lock
+li   t0, 3          # (owner=1)<<1 | (value=1) = 3
+sw   t0, 0(mutex_addr)
+
+# Core 0: unlock
+li   t0, 2          # (owner=1)<<1 | (value=0) = 2
+sw   t0, 0(mutex_addr)
+
+# Core 1 (owner=2): try lock
+li   t0, 5          # (owner=2)<<1 | (value=1) = 5
+sw   t0, 0(mutex_addr)
+lw   t1, 0(mutex_addr)  # read back: if owner=2 → success
+```
+
+### 6.4 Contention Side-Channel
+
+The key security insight demonstrated in this phase:
+
+```
+Core 0: lock → [crypto operation: N cycles] → unlock
+Core 1: try_lock → FAIL → spin → try_lock → ... → SUCCESS
+
+Core 1's total spin time = N cycles = execution time of Core 0's crypto
+```
+
+**Observable from Python:**
+```python
+mc.get_global_cycles()       # increases with Core 0's work
+mc.get_mutex_contentions()   # counts failed lock attempts
+```
+
+**Experimental result from demo:**
+```
+Core 0 work =  5 NOPs → global_cycles = 12
+Core 0 work = 15 NOPs → global_cycles = 22
+Difference: 10 cycles = exactly 10 extra NOPs
+```
+
+This proves: **lock hold time is directly measurable by the contending core**, creating a timing side-channel that requires NO power measurement — just cycle counting.
+
+### 6.5 Demo: `demo_06_multicore.py`
+
+| Part | What happens | Key observation |
+|------|-------------|----------------|
+| 1 | Two cores compute independently | Both results correct in shared memory |
+| 2 | Core 0 locks, Core 1 gets contention | 2 contentions counted, mutex state visible |
+| 3 | Variable work under lock | 5 NOPs=12 cycles, 15 NOPs=22 cycles (linear!) |
+
+Run: `make demo-06`
+
+### 6.6 Updated Full System Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ demos/                                                                  │
+│  demo_01 → demo_06                                                      │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                     Python API                                          │
+│                                                                         │
+│  hades.CPU         (single-core, pipeline, cache, mem hierarchy, I/O)   │
+│  hades.MultiCore   (dual-core, shared memory, mutex, round-robin)       │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                     C++ Engine (build/hades.*.so)                       │
+│                                                                         │
+│  Single-core path:                                                      │
+│    CPU → Pipeline → Cache → MemHierarchy → I/O Bus                      │
+│                                                                         │
+│  Multi-core path:                                                       │
+│    MultiCore → Core0.step() + Core1.step() → shared Memory + I/O        │
+│                                              → Mutex (atomic lock)      │
+│                                                                         │
+│  Leakage: per-core power trace (independent)                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
