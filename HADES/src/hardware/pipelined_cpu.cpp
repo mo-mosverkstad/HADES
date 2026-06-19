@@ -8,12 +8,21 @@ void PipelinedCPU::reset() {
     for (int i = 0; i < 32; i++) regs_[i] = 0;
     pc_ = 0x1000;
     halted_ = false;
+    io_enabled_ = false;
     ifid_ = {};
     ex_ = {};
     memwb_ = {};
     perf_.reset();
     csrs_.clear();
     mem_.reset();
+    timer_.reset();
+    uart_.reset();
+    gpio_.reset();
+    // Register I/O devices on bus
+    io_bus_ = IOBus();
+    io_bus_.register_device(0xF000, &timer_);
+    io_bus_.register_device(0xF020, &uart_);
+    io_bus_.register_device(0xF040, &gpio_);
 }
 
 void PipelinedCPU::run(uint32_t max_instructions) {
@@ -29,6 +38,8 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 
 void PipelinedCPU::pipeline_cycle() {
     perf_.mcycle++;
+    // Tick I/O devices
+    if (io_enabled_) io_bus_.tick_all();
     if (detect_load_use_hazard()) {
         perf_.stalls_data++;
         stage_writeback();

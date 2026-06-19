@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <vector>
 #include "memory.h"
+#include "io_bus.h"
+#include "gpio.h"
+#include "timer.h"
+#include "uart.h"
 
 // CRTP base providing common CPU state and accessor implementations.
 template<typename Derived>
@@ -38,24 +42,25 @@ public:
     uint64_t get_sdram_row_misses() const { return mem_.sdram().get_row_misses(); }
 
     // I/O devices (Phase 7)
-    void uart_send(const std::vector<uint8_t>& data);
-    std::vector<uint8_t> uart_recv();
-    void gpio_set_input(uint32_t value);
-    uint32_t gpio_get_output() const;
+    void set_io_enabled(bool enabled) { io_enabled_ = enabled; }
+    bool get_io_enabled() const { return io_enabled_; }
+    void uart_send(const std::vector<uint8_t>& data){ uart_.host_send(data); };
+    std::vector<uint8_t> uart_recv() { return uart_.host_recv(); };
+    void gpio_set_input(uint32_t value) { gpio_.set_input(value); };
+    uint32_t gpio_get_output() const { return gpio_.get_output(); };
 
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
     bool halted_ = false;
 
-    Memory mem_;
-    
-    // I/O devices (Phase 7)
+    // I/O devices (Phase 7) — io_enabled_ and io_bus_ declared before mem_
+    bool io_enabled_ = false;
     IOBus io_bus_;
+    Memory mem_{io_bus_, io_enabled_};
     Timer timer_;
     UART uart_;
     GPIO gpio_;
-    bool io_enabled_;
 
     void write_reg(uint32_t rd, uint32_t value) {
         if (rd != 0) regs_[rd] = value;

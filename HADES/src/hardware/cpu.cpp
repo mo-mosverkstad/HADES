@@ -9,6 +9,13 @@ void CPU::reset() {
     cycles_ = 0;
     halted_ = false;
     mem_.reset();
+    timer_.reset();
+    uart_.reset();
+    gpio_.reset();
+    io_bus_ = IOBus();
+    io_bus_.register_device(0xF000, &timer_);
+    io_bus_.register_device(0xF020, &uart_);
+    io_bus_.register_device(0xF040, &gpio_);
 }
 
 void CPU::run(uint32_t max_instructions) {
@@ -18,6 +25,7 @@ void CPU::run(uint32_t max_instructions) {
         cycles_ += mem_.imem().drain_penalty();
 
         execute(instr);
+        if (io_enabled_) io_bus_.tick_all();
         cycles_++;
         count++;
     }

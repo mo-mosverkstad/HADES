@@ -77,6 +77,7 @@ prog = to_bytes(
 )
 
 cpu = hades.PipelinedCPU()
+cpu.set_io_enabled(True)
 cpu.uart_send([ord('H'), ord('i')])  # Python -> CPU RX FIFO
 cpu.load_program(list(prog))
 cpu.run()
@@ -111,6 +112,7 @@ prog = to_bytes(
 )
 
 cpu = hades.PipelinedCPU()
+cpu.set_io_enabled(True)
 cpu.gpio_set_input(0xAA)  # Python sets input pins
 cpu.load_program(list(prog))
 cpu.run()
@@ -133,33 +135,6 @@ print(f"  Timer registers at 0x{TIMER_BASE:04X}\n")
 #   3. Do some work (loop)
 #   4. Take snapshot (write to SNAP_LO register)
 #   5. Read snapshot value
-timer_addr_instrs = load_addr(T4, TIMER_BASE)
-prog = to_bytes(
-    timer_addr_instrs + [
-        # Set period = 0xFFFF
-        encode_i(0x7FF, ZERO, 0b000, T0, OP_IMM),  # t0 = 0x7FF (max 12-bit imm)
-        encode_i(1, T0, 0b001, T0, OP_IMM),         # slli t0, t0, 1 -> 0xFFE
-        encode_i(0x08, T4, 0b010, ZERO, OP_STORE),   # sw t0, 0x08(t4) -> PERIOD_LO (wrong, use T0)
-    ] + [
-        # Actually: store t0 to PERIOD_LO (offset 0x08)
-        encode_s(0x08, T0, T4, 0b010, OP_STORE),
-        # Start timer: CONTROL = ITO(1) | CONT(2) | START(4) = 7
-        encode_i(7, ZERO, 0b000, T1, OP_IMM),
-        encode_s(0x04, T1, T4, 0b010, OP_STORE),    # sw t1, 0x04(t4) → CONTROL
-        # Do some work (small loop)
-        encode_i(10, ZERO, 0b000, T2, OP_IMM),      # t2 = 10
-        encode_i(-1 & 0xFFF, T2, 0b000, T2, OP_IMM), # t2--
-    ] + [
-        # Take snapshot: write anything to SNAP_LO (offset 0x10)
-        encode_s(0x10, ZERO, T4, 0b010, OP_STORE),
-        # Read snapshot
-        encode_i(0x10, T4, 0b010, T5, OP_LOAD),     # lw t5, 0x10(t4) → SNAP_LO
-        ECALL,
-    ]
-)
-
-# Remove the incorrect store instruction (line with ZERO as rs2 for period)
-# Let me simplify: just demonstrate timer reads
 prog_simple = to_bytes(
     timer_addr_instrs + [
         encode_i(100, ZERO, 0b000, T0, OP_IMM),     # Set period = 100
@@ -189,6 +164,7 @@ prog_simple = to_bytes(
 )
 
 cpu = hades.PipelinedCPU()
+cpu.set_io_enabled(True)
 cpu.load_program(list(prog_simple))
 cpu.run()
 

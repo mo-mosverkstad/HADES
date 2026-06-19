@@ -26,7 +26,13 @@ PYBIND11_MODULE(hades, m) {
         .def("get_dcache_misses", &CPU::get_dcache_misses)
         .def("set_mem_hierarchy_enabled", &CPU::set_mem_hierarchy_enabled, py::arg("enabled"))
         .def("get_sdram_row_hits", &CPU::get_sdram_row_hits)
-        .def("get_sdram_row_misses", &CPU::get_sdram_row_misses);
+        .def("get_sdram_row_misses", &CPU::get_sdram_row_misses)
+        .def("set_io_enabled", &CPU::set_io_enabled, py::arg("enabled"))
+        .def("get_io_enabled", &CPU::get_io_enabled)
+        .def("uart_send", &CPU::uart_send, py::arg("data"))
+        .def("uart_recv", &CPU::uart_recv)
+        .def("gpio_set_input", &CPU::gpio_set_input, py::arg("value"))
+        .def("gpio_get_output", &CPU::gpio_get_output);
 
     py::class_<PerfCounters>(m, "PerfCounters")
         .def_readonly("mcycle", &PerfCounters::mcycle)
@@ -52,5 +58,11 @@ PYBIND11_MODULE(hades, m) {
         .def("get_dcache_misses", &PipelinedCPU::get_dcache_misses)
         .def("set_mem_hierarchy_enabled", &PipelinedCPU::set_mem_hierarchy_enabled, py::arg("enabled"))
         .def("get_sdram_row_hits", &PipelinedCPU::get_sdram_row_hits)
-        .def("get_sdram_row_misses", &PipelinedCPU::get_sdram_row_misses);
+        .def("get_sdram_row_misses", &PipelinedCPU::get_sdram_row_misses)
+        .def("set_io_enabled", &PipelinedCPU::set_io_enabled, py::arg("enabled"))
+        .def("get_io_enabled", &PipelinedCPU::get_io_enabled)
+        .def("uart_send", &PipelinedCPU::uart_send, py::arg("data"))
+        .def("uart_recv", &PipelinedCPU::uart_recv)
+        .def("gpio_set_input", &PipelinedCPU::gpio_set_input, py::arg("value"))
+        .def("gpio_get_output", &PipelinedCPU::gpio_get_output);
 }
