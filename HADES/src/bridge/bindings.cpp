@@ -33,7 +33,10 @@ PYBIND11_MODULE(hades, m) {
         .def("uart_send", &CPU::uart_send, py::arg("data"))
         .def("uart_recv", &CPU::uart_recv)
         .def("gpio_set_input", &CPU::gpio_set_input, py::arg("value"))
-        .def("gpio_get_output", &CPU::gpio_get_output);
+        .def("gpio_get_output", &CPU::gpio_get_output)
+        .def("vga_get_framebuffer", &CPU::vga_get_framebuffer)
+        .def("vga_get_char_buffer", &CPU::vga_get_char_buffer)
+        .def("vga_get_char_row", &CPU::vga_get_char_row, py::arg("row"));
 
     py::class_<PerfCounters>(m, "PerfCounters")
         .def_readonly("mcycle", &PerfCounters::mcycle)
@@ -65,7 +68,10 @@ PYBIND11_MODULE(hades, m) {
         .def("uart_send", &PipelinedCPU::uart_send, py::arg("data"))
         .def("uart_recv", &PipelinedCPU::uart_recv)
         .def("gpio_set_input", &PipelinedCPU::gpio_set_input, py::arg("value"))
-        .def("gpio_get_output", &PipelinedCPU::gpio_get_output);
+        .def("gpio_get_output", &PipelinedCPU::gpio_get_output)
+        .def("vga_get_framebuffer", &PipelinedCPU::vga_get_framebuffer)
+        .def("vga_get_char_buffer", &PipelinedCPU::vga_get_char_buffer)
+        .def("vga_get_char_row", &PipelinedCPU::vga_get_char_row, py::arg("row"));
 
     py::class_<MultiCore>(m, "MultiCore")
         .def(py::init<>())

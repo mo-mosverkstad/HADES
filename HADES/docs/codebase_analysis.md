@@ -1589,8 +1589,8 @@ lw   t1, 0(mutex_addr)  # read back: if owner=2 → success
 The key security insight demonstrated in this phase:
 
 ```
-Core 0: lock → [crypto operation: N cycles] → unlock
-Core 1: try_lock → FAIL → spin → try_lock → ... → SUCCESS
+Core 0: lock -> [crypto operation: N cycles] -> unlock
+Core 1: try_lock -> FAIL -> spin -> try_lock -> ... -> SUCCESS
 
 Core 1's total spin time = N cycles = execution time of Core 0's crypto
 ```
@@ -1603,8 +1603,8 @@ mc.get_mutex_contentions()   # counts failed lock attempts
 
 **Experimental result from demo:**
 ```
-Core 0 work =  5 NOPs → global_cycles = 12
-Core 0 work = 15 NOPs → global_cycles = 22
+Core 0 work =  5 NOPs -> global_cycles = 12
+Core 0 work = 15 NOPs -> global_cycles = 22
 Difference: 10 cycles = exactly 10 extra NOPs
 ```
 
@@ -1625,7 +1625,7 @@ Run: `make demo-06`
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ demos/                                                                  │
-│  demo_01 → demo_06                                                      │
+│  demo_01 -> demo_06                                                     │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────────────┐
@@ -1639,12 +1639,138 @@ Run: `make demo-06`
 │                     C++ Engine (build/hades.*.so)                       │
 │                                                                         │
 │  Single-core path:                                                      │
-│    CPU → Pipeline → Cache → MemHierarchy → I/O Bus                      │
+│    CPU → Pipeline -> Cache -> MemHierarchy -> I/O Bus                   │
 │                                                                         │
 │  Multi-core path:                                                       │
-│    MultiCore → Core0.step() + Core1.step() → shared Memory + I/O        │
-│                                              → Mutex (atomic lock)      │
+│    MultiCore -> Core0.step() + Core1.step() -> shared Memory + I/O      │
+│                                             -> Mutex (atomic lock)      │
 │                                                                         │
 │  Leakage: per-core power trace (independent)                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Phase 7: VGA Display
+
+### 7.1 VGA Device (`layer1_hardware/include/vga.h`)
+
+The VGA provides visual output from the CPU, supporting two modes:
+
+**Character mode** (80*60 ASCII):
+- Fast text display, like a terminal
+- Cursor auto-advances on each character write
+- Useful for printf-style debugging
+
+**Pixel mode** (320*240 RGB565):
+- 16-bit color per pixel (5 red, 6 green, 5 blue)
+- Address auto-increments on each pixel write
+- Useful for graphics, plots, visualizations
+
+### 7.2 Register Map (base 0xF080)
+
+| Offset | Register | Read | Write |
+|--------|----------|------|-------|
+| 0x00 | CONTROL | mode + enable flags | [0] mode (0=pixel,1=char), [1] enable |
+| 0x04 | STATUS | [0] VSYNC | (read-only) |
+| 0x08 | CURSOR_X | current column | set column (0-79) |
+| 0x0C | CURSOR_Y | current row | set row (0-59) |
+| 0x10 | PIXEL_ADDR | current pixel address | set address (0-76799) |
+| 0x14 | PIXEL_DATA | read pixel at addr | write RGB565, auto-increment addr |
+| 0x18 | CHAR_WRITE | read char at cursor | write ASCII, auto-advance cursor |
+
+### 7.3 Character Buffer Operation
+
+```cpp
+void VGA::write(uint32_t offset, uint32_t value) {
+    case 0x18: // CHAR_WRITE
+        chars_[cursor_y_ * 80 + cursor_x_] = (uint8_t)(value & 0x7F);
+        cursor_x_++;
+        if (cursor_x_ >= 80) {
+            cursor_x_ = 0;
+            cursor_y_++;  // wrap to next line
+        }
+}
+```
+
+CPU writes characters one at a time. The cursor advances automatically, wrapping at end of line. This mimics how real terminal hardware works — the CPU just sends bytes, the display handles positioning.
+
+### 7.4 Pixel Buffer Operation
+
+```cpp
+void VGA::write(uint32_t offset, uint32_t value) {
+    case 0x14: // PIXEL_DATA
+        pixels_[pixel_addr_] = (uint16_t)(value & 0xFFFF);
+        pixel_addr_++;  // auto-increment for sequential fills
+}
+```
+
+RGB565 color format:
+```
+Bit:  15 14 13 12 11 | 10 9 8 7 6 5 | 4 3 2 1 0
+      R  R  R  R  R  | G  G G G G G | B B B B B
+
+Red   = 0xF800 = 11111_000000_00000
+Green = 0x07E0 = 00000_111111_00000
+Blue  = 0x001F = 00000_000000_11111
+White = 0xFFFF = 11111_111111_11111
+Black = 0x0000 = 00000_000000_00000
+```
+
+### 7.5 Python API
+
+```python
+# Read entire framebuffer (76800 uint16 values)
+fb = cpu.vga_get_framebuffer()
+pixel_at_0_0 = fb[0]
+pixel_at_x_y = fb[y * 320 + x]
+
+# Read character buffer
+chars = cpu.vga_get_char_buffer()  # 4800 uint8 values
+
+# Read a single row as string (convenient for text verification)
+row0 = cpu.vga_get_char_row(0)  # "HADES..."
+```
+
+### 7.6 Typical Usage Pattern (Assembly)
+
+```asm
+# Write "OK" to VGA character display
+    li   t4, 0xF080        # VGA base address
+    li   t0, 3             # CONTROL = char_mode(1) | enable(2)
+    sw   t0, 0x00(t4)     # set control
+    sw   zero, 0x08(t4)   # cursor_x = 0
+    sw   zero, 0x0C(t4)   # cursor_y = 0
+    li   t0, 'O'
+    sw   t0, 0x18(t4)     # write 'O', cursor advances
+    li   t0, 'K'
+    sw   t0, 0x18(t4)     # write 'K', cursor advances
+```
+
+### 7.8 Demo: `demo_07_vga.py`
+
+| Part | Mode | What CPU writes | Python reads back |
+|------|------|----------------|-------------------|
+| 1 | Character | 'HADES' at (0,0) | `vga_get_char_row(0)` -> "HADES" |
+| 2 | Pixel | 5 RGB565 colors | `vga_get_framebuffer()[0:5]` -> [0xF800, 0x07E0, 0x001F, 0xFFFF, 0x0000] |
+| 3 | Character | 'OK' row 0, '42' row 1 | Multi-line readback verified |
+
+Run: `make demo-07`
+
+### 7.9 Complete I/O Device Map (All Phases)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    I/O Address Space (0xF000+)                  │
+├──────────┬──────────────────────────────────────────────────────┤
+│ 0xF000   │ Timer    (countdown, IRQ, snapshot)         Phase 7  │
+│ 0xF020   │ UART     (FIFO TX/RX, host<->CPU)           Phase 7  │
+│ 0xF040   │ GPIO     (pins, edge detect, IRQ)           Phase 7  │
+│ 0xF060   │ Mutex    (atomic lock, multi-core)          Phase 8  │
+│ 0xF080   │ VGA      (320*240 pixel + 80*60 char)       Phase 9  │
+└──────────┴──────────────────────────────────────────────────────┘
+```
+
+All devices share the same interface pattern:
+1. CPU does `SW value, offset(base_addr)` -> device register write
+2. CPU does `LW rd, offset(base_addr)` -> device register read
+3. I/O bus routes based on address range
+4. Python can interact via dedicated APIs (`uart_send`, `gpio_set_input`, `vga_get_*`)

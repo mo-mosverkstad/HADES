@@ -18,11 +18,13 @@ void PipelinedCPU::reset() {
     timer_.reset();
     uart_.reset();
     gpio_.reset();
+    vga_.reset();
     // Register I/O devices on bus
     io_bus_ = IOBus();
     io_bus_.register_device(0xF000, &timer_);
     io_bus_.register_device(0xF020, &uart_);
     io_bus_.register_device(0xF040, &gpio_);
+    io_bus_.register_device(0xF080, &vga_);
 }
 
 void PipelinedCPU::run(uint32_t max_instructions) {

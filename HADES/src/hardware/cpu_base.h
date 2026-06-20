@@ -1,11 +1,13 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <string>
 #include "memory.h"
 #include "io_bus.h"
 #include "gpio.h"
 #include "timer.h"
 #include "uart.h"
+#include "vga.h"
 
 // CRTP base providing common CPU state and accessor implementations.
 template<typename Derived>
@@ -48,6 +50,11 @@ public:
     std::vector<uint8_t> uart_recv() { return uart_.host_recv(); };
     void gpio_set_input(uint32_t value) { gpio_.set_input(value); };
     uint32_t gpio_get_output() const { return gpio_.get_output(); };
+    
+    // VGA
+    std::vector<uint16_t> vga_get_framebuffer() const { return vga_.get_framebuffer(); }
+    std::vector<uint8_t> vga_get_char_buffer() const { return vga_.get_char_buffer(); }
+    std::string vga_get_char_row(uint32_t row) const { return vga_.get_char_row(row); }
 
 protected:
     uint32_t regs_[32]{};
@@ -61,6 +68,7 @@ protected:
     Timer timer_;
     UART uart_;
     GPIO gpio_;
+    VGA vga_;
 
     void write_reg(uint32_t rd, uint32_t value) {
         if (rd != 0) regs_[rd] = value;
