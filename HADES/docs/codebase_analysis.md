@@ -1942,3 +1942,95 @@ Python feeds one byte at a time, runs the CPU until it spins again, then reads t
 | Complete embedded system | All components working together |
 
 This is the culmination of all 8 phases: a fully functional embedded computer running an interactive program, with observable side-channels at every level.
+
+---
+
+## 8.9 Bug Fix: Demo 08c Unresponsive Processor
+
+**Commit:** `c903da2` — "HADES: Phase 8 - Fix demo8c unresponsible processor bug"  
+**File changed:** `src/hardware/pipelined_cpu.cpp`
+
+### Symptom
+
+In `demo_08c_game_interactive.py`, the PipelinedCPU would only respond to the **first** user input. All subsequent inputs produced empty output:
+
+```
+  Your guess (1-9): 3
+  PipelinedCPU says: >3 LOW
+  Your guess (1-9): 3
+  PipelinedCPU says: 
+  Your guess (1-9): ^C
+```
+
+The CPU appeared completely frozen after the first guess, regardless of how long the user waited between inputs.
+
+### Root Cause
+
+The `PipelinedCPU::run()` method used **absolute** comparisons against cumulative performance counters:
+
+```cpp
+// BUGGY — absolute thresholds
+void PipelinedCPU::run(uint32_t max_instructions) {
+    uint64_t max_cycles = (uint64_t)max_instructions * 4;
+    while (perf_.mcycle < max_cycles) {          // absolute cycle limit
+        pipeline_cycle();
+        if (halted_ && !memwb_.valid) break;
+        if (perf_.minstret >= max_instructions) break;  // absolute instruction limit
+    }
+}
+```
+
+The counters `perf_.mcycle` and `perf_.minstret` are **cumulative** — they monotonically increase across all calls to `run()` and are never reset between calls.
+
+The interactive demo calls `run()` multiple times in sequence:
+
+1. `cpu.run(5000)` — display title. After this: `minstret ≈ 4500`.
+2. User types '3'. `cpu.run(10000)` — process first guess. After this: `minstret ≈ 11000`.
+3. User types '3' again. `cpu.run(10000)` — **immediately exits** because `minstret (11000) >= max_instructions (10000)` is already true on the very first iteration.
+
+The cycle check (`perf_.mcycle < 40000`) was also problematic but the instruction check triggered first due to the ratio of spinning instructions in the UART polling loop.
+
+### Why Waiting Doesn't Help
+
+The CPU does **not** run in real-time. It only executes when Python explicitly calls `cpu.run(N)`. Between keypresses, the CPU is completely frozen. The real-world clock is irrelevant — only the cumulative instruction counter matters, and it was already past the threshold.
+
+### The Fix
+
+Changed to **relative** comparisons — snapshot the counters at the start of each `run()` call and measure progress from that baseline:
+
+```cpp
+// FIXED — relative thresholds
+void PipelinedCPU::run(uint32_t max_instructions) {
+    uint64_t start_cycles = perf_.mcycle;
+    uint64_t start_instret = perf_.minstret;
+    uint64_t max_cycles = (uint64_t)max_instructions * 4;
+    while (perf_.mcycle - start_cycles < max_cycles) {       // relative
+        pipeline_cycle();
+        if (halted_ && !memwb_.valid) break;
+        if (perf_.minstret - start_instret >= max_instructions) break;  // relative
+    }
+}
+```
+
+Now each `run(N)` call executes **up to N instructions from wherever the CPU currently is**, regardless of how many instructions were executed in previous calls.
+
+### Analogy
+
+- **Bug:** "Run until the odometer shows 10,000 km." Works for the first trip, but after a round trip the odometer already reads 12,000, so the next "run 10,000" does nothing.
+- **Fix:** "Run for 10,000 km from the current reading." Works every time.
+
+### Impact
+
+This bug affected **any** code pattern that calls `cpu.run()` multiple times on the same CPU instance — not just the interactive demo. The chunk-based execution used by CERBERUS (`cpu.run(500)` in a loop) also relies on correct relative behavior.
+
+### Verification
+
+After the fix, piped input produces correct output for all guesses:
+
+```
+$ echo -e "3\n7\n5" | make demo-08c
+  Your guess (1-9): PipelinedCPU says: >3 LOW
+  Your guess (1-9): PipelinedCPU says: >7 HIGH
+  Your guess (1-9): PipelinedCPU says: >5 WIN!
+  You won in 3 guesses!
+```
