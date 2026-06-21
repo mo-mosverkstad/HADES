@@ -27,12 +27,15 @@ void PipelinedCPU::reset() {
     io_bus_.register_device(0xF080, &vga_);
 }
 
+// cpu.run(N) means "continue executing from where the CPU is currently paused, for up to N instructions."
 void PipelinedCPU::run(uint32_t max_instructions) {
+    uint64_t start_cycles = perf_.mcycle;
+    uint64_t start_instret = perf_.minstret;
     uint64_t max_cycles = (uint64_t)max_instructions * 4;
-    while (perf_.mcycle < max_cycles) {
+    while (perf_.mcycle - start_cycles < max_cycles) {
         pipeline_cycle();
         if (halted_ && !memwb_.valid) break;
-        if (perf_.minstret >= max_instructions) break;
+        if (perf_.minstret - start_instret >= max_instructions) break;
     }
 }
 
