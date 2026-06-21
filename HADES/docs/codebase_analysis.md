@@ -2034,3 +2034,241 @@ $ echo -e "3\n7\n5" | make demo-08c
   Your guess (1-9): PipelinedCPU says: >5 WIN!
   You won in 3 guesses!
 ```
+
+---
+
+## 9. Threaded Processor Execution (Planned)
+
+### 9.1 Motivation
+
+The current execution model is **synchronous and cooperative**: the CPU only runs when Python explicitly calls `cpu.run(N)`, executes exactly N instructions, then returns control. This creates a stop-and-go pattern:
+
+```
+Python: get user input → cpu.uart_send() → cpu.run(10000) → cpu.vga_get_char_row() → ...
+```
+
+This has fundamental limitations:
+
+1. **The CPU cannot run independently.** It must be manually stepped by the host program. A real processor runs continuously until it halts or is interrupted.
+2. **Budget estimation.** The caller must guess how many cycles are "enough" to process input. Too few → incomplete processing. Too many → wasted time in a spin loop.
+3. **No concurrent I/O.** The host cannot read UART output while the CPU is running. It must wait for `run()` to return, then check.
+4. **Interactive demos are fragile.** The demo-08c fix showed that repeated `run(N)` calls require careful budget management.
+
+### 9.2 Design: Threaded Execution Model
+
+#### Core Idea
+
+Move CPU execution to a **dedicated background thread**. The CPU runs continuously (like real hardware) while Python interacts with I/O devices concurrently from the main thread.
+
+#### Thread Lifecycle
+
+```
+                         ┌──────────────────────────────┐
+                         │   CPU Execution Thread       │
+                         │                              │
+   run(0) ──────────────►│  while (!halted && !stop):   │
+                         │      pipeline_cycle()        │
+                         │                              │
+   run(N) ──────────────►│  for i in 0..N:             │
+                         │      pipeline_cycle()        │
+                         │  then: pause (idle)          │
+                         │                              │
+   stop() ──────────────►│  sets stop flag → exits loop │
+                         │  thread idles (not killed)   │
+                         └──────────────────────────────┘
+```
+
+#### API Semantics (Backward Compatible)
+
+| Call | Current Behavior | New Behavior |
+|------|-----------------|--------------|
+| `cpu.run(10000)` | Execute 10000 instructions, block until done | Start thread if not started. Execute 10000 instructions, block until done. Returns after completion. |
+| `cpu.run(0)` | Execute 0 instructions (no-op) | Start thread if not started. **Run indefinitely** until halt or `stop()`. Non-blocking: returns immediately. |
+| `cpu.run()` (default=1000000) | Execute 1M instructions | Same as current: execute up to 1M instructions, block until done. |
+
+The key insight: **`run(N)` with N>0 remains blocking and backward-compatible.** Only `run(0)` introduces new free-running behavior.
+
+#### New Methods
+
+| Method | Purpose |
+|--------|---------|
+| `cpu.stop()` | Force the CPU to pause execution. Sets a stop flag that the execution loop checks every cycle. Does **not** reset state — PC, registers, memory all preserved. |
+| `cpu.is_running()` | Returns `true` if the CPU thread is actively executing (not paused, not halted). |
+| `cpu.wait()` | Block until the CPU halts or pauses (useful after `run(0)` to wait for halt). |
+
+#### Thread Safety for I/O
+
+UART, GPIO, and VGA must be **thread-safe** since Python reads/writes them from the main thread while the CPU thread accesses them every cycle:
+
+| Device | Shared State | Synchronization |
+|--------|-------------|-----------------|
+| UART RX FIFO | Host pushes, CPU pops | Mutex or lock-free queue |
+| UART TX buffer | CPU pushes, host pops | Mutex or lock-free queue |
+| GPIO input/output | Host writes input, CPU writes output | Atomic uint32_t |
+| VGA char/frame buffer | CPU writes, host reads | Copy-on-read or mutex |
+| Timer | CPU reads/ticks | No sharing needed (CPU-only) |
+
+#### Stop Mechanism (Dead Loop Safety)
+
+If `run(0)` is called and the program enters a dead loop (no halt, no I/O progress):
+
+```python
+cpu.run(0)                  # start free-running
+time.sleep(5)               # wait for some reasonable time
+if cpu.is_running():        # still going?
+    cpu.stop()              # force pause
+    # CPU is now paused at whatever PC it reached
+    # State is preserved — can inspect registers, memory
+    # Can call run() again to resume
+```
+
+The stop flag is checked every cycle (`if (stop_requested_) break;`), so worst case latency is one pipeline cycle.
+
+### 9.3 Implementation Plan
+
+#### Phase A: Thread Infrastructure
+
+```cpp
+// Added to CPUBase<T>
+private:
+    std::thread exec_thread_;
+    std::atomic<bool> running_{false};     // thread is actively executing
+    std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> thread_started_{false};
+    std::mutex run_mutex_;
+    std::condition_variable run_cv_;
+
+    void thread_main();  // the thread's main loop
+```
+
+#### Phase B: Modify `run()` Semantics
+
+```cpp
+void PipelinedCPU::run(uint32_t max_instructions) {
+    if (!thread_started_) {
+        exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
+        thread_started_ = true;
+    }
+
+    stop_requested_ = false;
+
+    if (max_instructions == 0) {
+        // Free-running mode: signal thread to run indefinitely, return immediately
+        signal_run(INFINITE);
+        return;
+    }
+
+    // Bounded mode: signal thread to run N instructions, block until done
+    signal_run(max_instructions);
+    wait_for_completion();
+}
+```
+
+#### Phase C: Thread Main Loop
+
+```cpp
+void PipelinedCPU::thread_main() {
+    while (true) {
+        wait_for_run_signal();  // sleep until run() is called
+
+        uint64_t target = (budget_ == INFINITE) ? UINT64_MAX : budget_;
+        uint64_t executed = 0;
+
+        running_ = true;
+        while (executed < target) {
+            if (stop_requested_) break;
+            if (halted_) break;
+            pipeline_cycle();
+            executed++;
+        }
+        running_ = false;
+
+        notify_completion();  // wake up blocking run(N) caller if any
+    }
+}
+```
+
+#### Phase D: Thread-Safe I/O
+
+Replace UART queues with lock-free or mutex-protected variants:
+
+```cpp
+class UART : public IODevice {
+    std::mutex rx_mutex_;
+    std::mutex tx_mutex_;
+    // ...
+    void host_send(const std::vector<uint8_t>& data) {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        for (uint8_t b : data) rx_fifo_.push(b);
+    }
+    uint32_t read(uint32_t offset) override {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        // pop from rx_fifo_
+    }
+};
+```
+
+GPIO uses `std::atomic<uint32_t>` — no mutex needed.
+
+VGA uses a mutex on the character/framebuffer, or provides a snapshot method.
+
+### 9.4 Revised Interactive Demo Pattern
+
+With threading, the interactive demo becomes much simpler:
+
+```python
+cpu = hades.PipelinedCPU()
+cpu.set_io_enabled(True)
+cpu.load_program(binary, 0x1000)
+cpu.run(0)  # start free-running in background
+
+while not won:
+    user_input = input("Your guess (1-9): ")
+    cpu.uart_send([ord(user_input)])
+    time.sleep(0.01)  # let CPU process
+    row_text = cpu.vga_get_char_row(guess_num)
+    print(f"CPU says: {row_text}")
+```
+
+No more guessing cycle budgets. The CPU runs at full speed, processes UART input as soon as it arrives, and the host reads VGA output whenever it wants.
+
+### 9.5 Edge Cases and Safety
+
+| Scenario | Handling |
+|----------|----------|
+| `run(0)` then `run(N)` | Second `run()` calls `stop()` implicitly, then starts bounded execution |
+| `run(N)` then `run(0)` | First completes (blocks), then second starts free-running |
+| `stop()` while paused | No-op |
+| `reset()` while running | Must `stop()` first, then reset state |
+| Destructor called while thread running | `stop()` + `join()` in destructor |
+| `run(0)` and program halts naturally | Thread detects `halted_`, sets `running_ = false`, idles |
+
+### 9.6 Backward Compatibility Guarantee
+
+| Existing code pattern | Still works? | Why |
+|----------------------|:------------:|-----|
+| `cpu.run(10000)` | ✓ | Blocking, executes exactly N instructions |
+| `cpu.run()` (default 1M) | ✓ | Blocking, up to 1M instructions |
+| Multiple `cpu.run(N)` calls | ✓ | Each blocks and executes N more instructions |
+| `cpu.uart_send()` before `run()` | ✓ | Data sits in FIFO, processed when CPU runs |
+| `cpu.uart_recv()` after `run()` | ✓ | Returns whatever CPU wrote to TX buffer |
+
+All existing demos and the CERBERUS `run.py` chunk-execution pattern continue to work unchanged.
+
+### 9.7 Performance Considerations
+
+- **Mutex cost per cycle:** If UART/VGA are protected by mutex, every `pipeline_cycle()` that does a load/store to I/O space acquires a lock. For the hot polling loop in `guess_game.S` (reads UART every ~4 cycles), this adds overhead.
+- **Mitigation:** Use lock-free SPSC (single-producer single-consumer) queues for UART FIFOs. CPU is the only consumer of RX and only producer of TX. Host is the opposite. No mutex needed.
+- **VGA:** Reads are infrequent from Python side. A simple mutex is fine — only acquired when Python calls `vga_get_char_row()`.
+- **GPIO:** Atomic operations — zero overhead beyond the atomic load/store.
+
+### 9.8 Summary
+
+| Aspect | Current | Threaded |
+|--------|---------|----------|
+| CPU execution | On-demand, Python-driven | Continuous, independent thread |
+| Blocking model | Always blocking | `run(N>0)` blocking, `run(0)` non-blocking |
+| Dead loop handling | Stuck forever in `run()` | `stop()` breaks out within 1 cycle |
+| I/O timing | Only during `run()` windows | Anytime (concurrent) |
+| Cycle budget guessing | Required | Optional (can use `run(0)`) |
+| API compatibility | — | 100% backward compatible |
