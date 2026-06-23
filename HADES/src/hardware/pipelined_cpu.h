@@ -45,6 +45,7 @@ private:
 
     // Pipeline operations
     void pipeline_cycle();
+    void thread_main();
     void stage_writeback();
     void stage_memory();
     void stage_execute();

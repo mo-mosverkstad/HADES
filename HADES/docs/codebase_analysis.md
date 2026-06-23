@@ -1945,7 +1945,7 @@ This is the culmination of all 8 phases: a fully functional embedded computer ru
 
 ---
 
-## 8.9 Bug Fix: Demo 08c Unresponsive Processor
+### 8.9 Bug Fix: Demo 08c Unresponsive Processor
 
 **Commit:** `c903da2` — "HADES: Phase 8 - Fix demo8c unresponsible processor bug"  
 **File changed:** `src/hardware/pipelined_cpu.cpp`
@@ -2037,7 +2037,7 @@ $ echo -e "3\n7\n5" | make demo-08c
 
 ---
 
-## 9. Threaded Processor Execution (Planned)
+## Phase 9. Threaded Processor Execution
 
 ### 9.1 Motivation
 
@@ -2124,7 +2124,182 @@ if cpu.is_running():        # still going?
 
 The stop flag is checked every cycle (`if (stop_requested_) break;`), so worst case latency is one pipeline cycle.
 
-### 9.3 Implementation Plan
+### 9.3 How C++ Threading Works (Concepts)
+
+This section explains the C++ threading primitives used in HADES, for those unfamiliar with `<thread>`, `<mutex>`, and `<condition_variable>`.
+
+#### What Is a Thread?
+
+A thread is a separate flow of execution running **in parallel** with your main program. In C++, you create one with `std::thread`:
+
+```cpp
+std::thread t(some_function, arg1, arg2);
+// 'some_function' now runs concurrently in a new OS thread
+```
+
+The thread starts immediately upon construction. The main thread continues executing the next line while `some_function` runs in parallel.
+
+**Critical rule:** Before a `std::thread` object is destroyed, you must call either:
+- `t.join()` — block until the thread finishes
+- `t.detach()` — let it run independently (rarely what you want)
+
+If you destroy a joinable thread without doing either, the program calls `std::terminate()` (crashes).
+
+#### std::mutex — Protecting Shared Data
+
+When two threads access the same variable, you get **data races** (undefined behavior). A mutex (mutual exclusion) prevents this:
+
+```cpp
+std::mutex mtx;
+int shared_counter = 0;
+
+// Thread 1:                    // Thread 2:
+mtx.lock();                     mtx.lock();        // blocks until Thread 1 unlocks
+shared_counter++;               shared_counter++;
+mtx.unlock();                   mtx.unlock();
+```
+
+Only one thread can hold the lock at a time. The other thread **blocks** (sleeps) until the lock is released.
+
+**RAII wrappers** (preferred — exception-safe, can't forget to unlock):
+
+```cpp
+{
+    std::lock_guard<std::mutex> lk(mtx);  // locks on construction
+    shared_counter++;
+}   // automatically unlocks when 'lk' goes out of scope
+```
+
+`std::unique_lock` is like `lock_guard` but can be unlocked/relocked manually — required for condition variables.
+
+#### std::condition_variable — Signaling Between Threads
+
+A condition variable lets one thread **sleep** until another thread **wakes it up**. This is how the CPU thread sleeps between `run()` calls instead of busy-spinning.
+
+Pattern (producer/consumer):
+
+```cpp
+std::mutex mtx;
+std::condition_variable cv;
+bool ready = false;   // the "condition" being waited on
+
+// WAITING thread (CPU thread):
+{
+    std::unique_lock<std::mutex> lk(mtx);
+    cv.wait(lk, [&]{ return ready; });  // sleeps until ready == true
+    // woken up, lock is held, ready is guaranteed true
+    ready = false;  // reset for next time
+}
+
+// SIGNALING thread (Python/main thread):
+{
+    std::lock_guard<std::mutex> lk(mtx);
+    ready = true;
+    cv.notify_one();  // wake up the waiting thread
+}
+```
+
+**How `cv.wait(lk, predicate)` works internally:**
+1. Check predicate — if already true, don't sleep, just return
+2. If false: atomically **release the mutex** and put this thread to sleep
+3. When `notify_one()` is called: wake up, **re-acquire the mutex**, check predicate again
+4. If predicate is true: return (thread continues with lock held)
+5. If predicate is false (spurious wakeup): go back to sleep
+
+The predicate lambda (`[&]{ return ready; }`) prevents **spurious wakeups** — the OS can wake threads for no reason, so you must always re-check the condition.
+
+#### std::atomic — Lock-Free Shared Variables
+
+For simple flags/counters, `std::atomic` provides thread-safe access without a mutex:
+
+```cpp
+std::atomic<bool> stop_requested_{false};
+
+// Thread 1 (writer):
+stop_requested_ = true;    // atomic store
+
+// Thread 2 (reader, every cycle):
+if (stop_requested_) break;   // atomic load
+```
+
+Atomics are much cheaper than mutexes (no OS call, no blocking), but only work for single-variable operations. You can't atomically update *two* variables with atomics alone.
+
+#### How These Connect in HADES
+
+Here's the complete lifecycle of a `run(N)` call:
+
+```
+Python calls cpu.run(10000)
+        │
+        ▼
+┌─ Main Thread ─────────────────────────┐    ┌─ CPU Thread ──────────────────────────┐
+│                                        │    │                                        │
+│ 1. First call? Create thread:          │    │ (thread starts here)                   │
+│    exec_thread_ = std::thread(...)     │───►│                                        │
+│                                        │    │ 2. wait_for_run_signal():              │
+│ 3. signal_run(10000):                  │    │    cv.wait(lk, []{return signaled;})   │
+│    lock mutex                          │    │    ... sleeping ...                     │
+│    budget_ = 10000                     │    │                                        │
+│    run_signaled_ = true                │    │                                        │
+│    cv.notify_one()  ──────────────────────► │ 4. Wakes up! budget_ = 10000          │
+│    unlock mutex                        │    │    running_ = true                     │
+│                                        │    │                                        │
+│ 5. wait_for_completion():              │    │ 6. Loop: pipeline_cycle() × 10000     │
+│    cv.wait(lk, []{return done;})       │    │    (checks stop_requested_ each cycle) │
+│    ... sleeping ...                     │    │                                        │
+│                                        │    │ 7. Done! running_ = false              │
+│                                        │  ◄─── notify_completion():                  │
+│ 8. Wakes up! Returns to Python.        │    │    done_signaled_ = true               │
+│                                        │    │    cv.notify_one()                     │
+│                                        │    │                                        │
+│                                        │    │ 9. Loop back to wait_for_run_signal()  │
+│                                        │    │    ... sleeping until next run() ...    │
+└────────────────────────────────────────┘    └────────────────────────────────────────┘
+```
+
+For `run(0)` (free-running), step 5 is skipped — main thread returns immediately, and the CPU thread runs until `halted_` or `stop()`.
+
+#### Destructor — Clean Shutdown
+
+When the Python object is garbage-collected, the C++ destructor must stop the thread:
+
+```cpp
+~CPUBase() {
+    if (thread_started_) {
+        {
+            std::lock_guard<std::mutex> lk(run_mutex_);
+            shutdown_ = true;       // tell thread to exit
+            run_signaled_ = true;   // wake it from sleep
+            run_cv_.notify_one();
+        }
+        exec_thread_.join();  // wait for thread to actually finish
+    }
+}
+```
+
+Without this, destroying the object while the thread sleeps causes a crash (`std::terminate`). The `shutdown_` flag is checked in `thread_main()` right after waking:
+
+```cpp
+void PipelinedCPU::thread_main() {
+    while (true) {
+        wait_for_run_signal();
+        if (shutdown_) return;  // exit the thread function → thread dies
+        // ... normal execution ...
+    }
+}
+```
+
+#### Summary of Primitives
+
+| Primitive | Purpose in HADES | Cost |
+|-----------|-----------------|------|
+| `std::thread` | Runs `pipeline_cycle()` loop independently | One OS thread |
+| `std::mutex` + `condition_variable` | Main↔CPU thread signaling (run/done) | Cheap when uncontended |
+| `std::atomic<bool>` | `stop_requested_`, `running_` flags | Nearly free (single atomic load/store) |
+| `std::lock_guard` | RAII mutex lock for signal_run/notify | Auto-unlock on scope exit |
+| `std::unique_lock` | Required by `cv.wait()` (must be unlockable) | Same as lock_guard + flexibility |
+
+### 9.4 Implementation Plan
 
 #### Phase A: Thread Infrastructure
 
@@ -2212,7 +2387,7 @@ GPIO uses `std::atomic<uint32_t>` — no mutex needed.
 
 VGA uses a mutex on the character/framebuffer, or provides a snapshot method.
 
-### 9.4 Revised Interactive Demo Pattern
+### 9.5 Revised Interactive Demo Pattern
 
 With threading, the interactive demo becomes much simpler:
 
@@ -2232,7 +2407,7 @@ while not won:
 
 No more guessing cycle budgets. The CPU runs at full speed, processes UART input as soon as it arrives, and the host reads VGA output whenever it wants.
 
-### 9.5 Edge Cases and Safety
+### 9.6 Edge Cases and Safety
 
 | Scenario | Handling |
 |----------|----------|
@@ -2243,7 +2418,7 @@ No more guessing cycle budgets. The CPU runs at full speed, processes UART input
 | Destructor called while thread running | `stop()` + `join()` in destructor |
 | `run(0)` and program halts naturally | Thread detects `halted_`, sets `running_ = false`, idles |
 
-### 9.6 Backward Compatibility Guarantee
+### 9.7 Backward Compatibility Guarantee
 
 | Existing code pattern | Still works? | Why |
 |----------------------|:------------:|-----|
@@ -2255,14 +2430,14 @@ No more guessing cycle budgets. The CPU runs at full speed, processes UART input
 
 All existing demos and the CERBERUS `run.py` chunk-execution pattern continue to work unchanged.
 
-### 9.7 Performance Considerations
+### 9.8 Performance Considerations
 
 - **Mutex cost per cycle:** If UART/VGA are protected by mutex, every `pipeline_cycle()` that does a load/store to I/O space acquires a lock. For the hot polling loop in `guess_game.S` (reads UART every ~4 cycles), this adds overhead.
 - **Mitigation:** Use lock-free SPSC (single-producer single-consumer) queues for UART FIFOs. CPU is the only consumer of RX and only producer of TX. Host is the opposite. No mutex needed.
 - **VGA:** Reads are infrequent from Python side. A simple mutex is fine — only acquired when Python calls `vga_get_char_row()`.
 - **GPIO:** Atomic operations — zero overhead beyond the atomic load/store.
 
-### 9.8 Summary
+### 9.9 Summary
 
 | Aspect | Current | Threaded |
 |--------|---------|----------|

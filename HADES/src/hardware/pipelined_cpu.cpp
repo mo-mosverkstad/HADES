@@ -27,6 +27,7 @@ void PipelinedCPU::reset() {
     io_bus_.register_device(0xF080, &vga_);
 }
 
+/*
 // cpu.run(N) means "continue executing from where the CPU is currently paused, for up to N instructions."
 void PipelinedCPU::run(uint32_t max_instructions) {
     uint64_t start_cycles = perf_.mcycle;
@@ -36,6 +37,44 @@ void PipelinedCPU::run(uint32_t max_instructions) {
         pipeline_cycle();
         if (halted_ && !memwb_.valid) break;
         if (perf_.minstret - start_instret >= max_instructions) break;
+    }
+}
+*/
+
+void PipelinedCPU::run(uint32_t max_instructions) {
+    if (!thread_started_) {
+        exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
+        thread_started_ = true;
+    }
+    stop_requested_ = false;
+    if (max_instructions == 0) {
+        // Free-running mode: signal thread to run indefinitely, return immediately
+        signal_run(INFINITE);
+        return;
+    }
+    // Bounded mode: signal thread to run N instructions, block until done
+    signal_run(max_instructions);
+    wait_for_completion();
+}
+
+void PipelinedCPU::thread_main() {
+    while (true) {
+        wait_for_run_signal();  // sleep until run() is called
+        if (shutdown_) return;
+
+        uint64_t target = (budget_ == INFINITE) ? UINT64_MAX : budget_;
+        uint64_t executed = 0;
+
+        running_ = true;
+        while (executed < target) {
+            if (stop_requested_) break;
+            if (halted_) break;
+            pipeline_cycle();
+            executed++;
+        }
+        running_ = false;
+
+        notify_completion();  // wake up blocking run(N) caller if any
     }
 }
 

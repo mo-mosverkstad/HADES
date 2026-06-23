@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
 #include "memory.h"
 #include "io_bus.h"
 #include "gpio.h"
@@ -13,6 +17,18 @@
 template<typename Derived>
 class CPUBase {
 public:
+    ~CPUBase() {
+        if (thread_started_) {
+            {
+                std::lock_guard<std::mutex> lk(run_mutex_);
+                shutdown_ = true;
+                run_signaled_ = true;
+                run_cv_.notify_one();
+            }
+            exec_thread_.join();
+        }
+    }
+
     void load_program(const std::vector<uint8_t>& binary, uint32_t base_addr = 0x1000) {
         mem_.load(base_addr, binary);
         pc_ = base_addr;
@@ -72,5 +88,45 @@ protected:
 
     void write_reg(uint32_t rd, uint32_t value) {
         if (rd != 0) regs_[rd] = value;
+    }
+
+    // Threading
+    std::thread exec_thread_;
+    std::atomic<bool> running_{false};     // thread is actively executing
+    std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> thread_started_{false};
+    bool shutdown_ = false;
+    std::mutex run_mutex_;
+    std::condition_variable run_cv_;
+    std::condition_variable done_cv_;
+    uint64_t budget_ = 0;
+    bool run_signaled_ = false;
+    bool done_signaled_ = false;
+
+    static constexpr uint64_t INFINITE = UINT64_MAX;
+
+    void signal_run(uint64_t n) {
+        std::lock_guard<std::mutex> lk(run_mutex_);
+        budget_ = n;
+        run_signaled_ = true;
+        run_cv_.notify_one();
+    }
+
+    void wait_for_run_signal() {
+        std::unique_lock<std::mutex> lk(run_mutex_);
+        run_cv_.wait(lk, [this]{ return run_signaled_; });
+        run_signaled_ = false;
+    }
+
+    void notify_completion() {
+        std::lock_guard<std::mutex> lk(run_mutex_);
+        done_signaled_ = true;
+        done_cv_.notify_one();
+    }
+
+    void wait_for_completion() {
+        std::unique_lock<std::mutex> lk(run_mutex_);
+        done_cv_.wait(lk, [this]{ return done_signaled_; });
+        done_signaled_ = false;
     }
 };
