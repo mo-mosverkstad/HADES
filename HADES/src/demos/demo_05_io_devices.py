@@ -135,6 +135,7 @@ print(f"  Timer registers at 0x{TIMER_BASE:04X}\n")
 #   3. Do some work (loop)
 #   4. Take snapshot (write to SNAP_LO register)
 #   5. Read snapshot value
+timer_addr_instrs = load_addr(T4, TIMER_BASE)
 prog_simple = to_bytes(
     timer_addr_instrs + [
         encode_i(100, ZERO, 0b000, T0, OP_IMM),     # Set period = 100
