@@ -1,6 +1,5 @@
 #include "pipelined_cpu.h"
 #include "rv32_decode.h"
-#include <iostream>
 
 PipelinedCPU::PipelinedCPU() { reset(); }
 
@@ -19,7 +18,6 @@ void PipelinedCPU::reset() {
     uart_.reset();
     gpio_.reset();
     vga_.reset();
-    // Register I/O devices on bus
     io_bus_ = IOBus();
     io_bus_.register_device(0xF000, &timer_);
     io_bus_.register_device(0xF020, &uart_);
@@ -27,9 +25,16 @@ void PipelinedCPU::reset() {
     io_bus_.register_device(0xF080, &vga_);
 }
 
-/*
-// cpu.run(N) means "continue executing from where the CPU is currently paused, for up to N instructions."
+void PipelinedCPU::step() {
+    pipeline_cycle();
+}
+
 void PipelinedCPU::run(uint32_t max_instructions) {
+    if (max_instructions == 0) {
+        exec_.run_async(0);
+        return;
+    }
+    // Synchronous execution
     uint64_t start_cycles = perf_.mcycle;
     uint64_t start_instret = perf_.minstret;
     uint64_t max_cycles = (uint64_t)max_instructions * 4;
@@ -39,55 +44,11 @@ void PipelinedCPU::run(uint32_t max_instructions) {
         if (perf_.minstret - start_instret >= max_instructions) break;
     }
 }
-*/
-
-void PipelinedCPU::run(uint32_t max_instructions) {
-    if (running_) return;  // already executing — ignore re-entrant call
-    if (!thread_started_) {
-        exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
-        thread_started_ = true;
-    }
-    stop_requested_ = false;
-    if (max_instructions == 0) {
-        // Free-running mode: signal thread to run indefinitely, return immediately
-        signal_run(0);
-        return;
-    }
-    // Bounded mode: signal thread to run N instructions, block until done
-    signal_run(max_instructions);
-    wait_for_completion();
-}
-
-void PipelinedCPU::thread_main() {
-    while (true) {
-        wait_for_run_signal();  // sleep until run() is called
-        if (shutdown_) return;
-        running_ = true;
-        run_pipeline(budget_, [&](){ return stop_requested_.load(std::memory_order_relaxed); });
-        running_ = false;
-
-        notify_completion();  // wake up blocking run(N) caller if any
-    }
-}
-
-template<typename Predicate>
-void PipelinedCPU::run_pipeline(uint64_t max_instructions, Predicate check_stop) {
-    uint64_t start_cycles = perf_.mcycle;
-    uint64_t start_instret = perf_.minstret;
-    uint64_t max_cycles = max_instructions * 4;
-    while (max_instructions == 0 || perf_.mcycle - start_cycles < max_cycles) {
-        if (check_stop()) break;
-        pipeline_cycle();
-        if (halted_ && !memwb_.valid) break;
-        if (max_instructions != 0 && perf_.minstret - start_instret >= max_instructions) break;
-    }
-}
 
 // ─── Pipeline Cycle ─────────────────────────────────────────────────────
 
 void PipelinedCPU::pipeline_cycle() {
     perf_.mcycle++;
-    // Tick I/O devices
     if (io_enabled_) io_bus_.tick_all();
     if (detect_load_use_hazard()) {
         perf_.stalls_data++;
@@ -267,7 +228,7 @@ bool PipelinedCPU::detect_load_use_hazard() const {
     return false;
 }
 
-// ─── ALU (pipeline-specific) ────────────────────────────────────────────
+// ─── ALU ────────────────────────────────────────────────────────────────
 
 ExecResult PipelinedCPU::execute_alu(const Decoded& d, uint32_t rs1_val, uint32_t rs2_val, uint32_t pc) {
     ExecResult r = {};
@@ -390,9 +351,3 @@ uint32_t PipelinedCPU::csr_read(uint32_t addr) const {
 void PipelinedCPU::csr_write(uint32_t addr, uint32_t value) {
     csrs_[addr] = value;
 }
-
-// ─── Observation ────────────────────────────────────────────────────────
-
-uint64_t PipelinedCPU::get_cycles() const { return perf_.mcycle; }
-uint64_t PipelinedCPU::get_instret() const { return perf_.minstret; }
-PerfCounters PipelinedCPU::get_perf_counters() const { return perf_; }

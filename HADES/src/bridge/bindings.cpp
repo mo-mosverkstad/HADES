@@ -16,6 +16,8 @@ PYBIND11_MODULE(hades, m) {
         .def("load_data", &CPU::load_data,
              py::arg("data"), py::arg("base_addr") = 0x0000)
         .def("run", &CPU::run, py::arg("max_instructions") = 1000000)
+        .def("stop", &CPU::stop)
+        .def("is_running", &CPU::is_running)
         .def("reset", &CPU::reset)
         .def("get_cycles", &CPU::get_cycles)
         .def("get_pc", &CPU::get_pc)
@@ -46,9 +48,13 @@ PYBIND11_MODULE(hades, m) {
 
     py::class_<PipelinedCPU>(m, "PipelinedCPU")
         .def(py::init<>())
-        .def("load_program", &PipelinedCPU::load_program, py::arg("binary"), py::arg("base_addr") = 0x1000)
-        .def("load_data", &PipelinedCPU::load_data, py::arg("data"), py::arg("base_addr") = 0x0000)
+        .def("load_program", &PipelinedCPU::load_program,
+             py::arg("binary"), py::arg("base_addr") = 0x1000)
+        .def("load_data", &PipelinedCPU::load_data,
+             py::arg("data"), py::arg("base_addr") = 0x0000)
         .def("run", &PipelinedCPU::run, py::arg("max_instructions") = 1000000)
+        .def("stop", &PipelinedCPU::stop)
+        .def("is_running", &PipelinedCPU::is_running)
         .def("reset", &PipelinedCPU::reset)
         .def("get_cycles", &PipelinedCPU::get_cycles)
         .def("get_instret", &PipelinedCPU::get_instret)

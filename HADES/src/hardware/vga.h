@@ -1,29 +1,13 @@
 #pragma once
 #include "io_bus.h"
 #include <vector>
-#include <cstring>
+#include <string>
+#include <mutex>
 
-// DTEK-V VGA Display (simplified)
-//
-// Two modes:
-//   1. Pixel buffer: 320×240, RGB565 (16-bit per pixel)
-//   2. Character buffer: 80×60, ASCII (8-bit per character)
-//
-// Memory-mapped at base address (registered on I/O bus):
-//   Offset 0x00: CONTROL register
-//     [0] MODE: 0=pixel, 1=character
-//     [1] ENABLE: display on/off
-//   Offset 0x04: STATUS register (read-only)
-//     [0] VSYNC: vertical sync pulse (toggled each frame)
-//   Offset 0x08: CURSOR_X (character mode)
-//   Offset 0x0C: CURSOR_Y (character mode)
-//   Offset 0x10: PIXEL_ADDR (write pixel at this address)
-//   Offset 0x14: PIXEL_DATA (RGB565 value to write)
-//   Offset 0x18: CHAR_WRITE (write ASCII char at cursor, auto-advance)
-//
-// For bulk pixel access, the framebuffer is also accessible via
-// a separate memory region (0xF100-0xFFFF in HADES simplified map).
-// But for simplicity, we use register-based pixel writes.
+// DTEK-V VGA Display (Thread-Safe)
+// CPU thread calls read()/write() via I/O bus.
+// Main thread calls get_char_row()/get_framebuffer() from Python.
+// char_mutex_ protects chars_[], pixel_mutex_ protects pixels_[].
 
 class VGA : public IODevice {
 public:
@@ -35,8 +19,14 @@ public:
     VGA() { reset(); }
 
     void reset() {
-        pixels_.assign(WIDTH * HEIGHT, 0);
-        chars_.assign(CHAR_COLS * CHAR_ROWS, ' ');
+        {
+            std::lock_guard<std::mutex> lk(pixel_mutex_);
+            pixels_.assign(WIDTH * HEIGHT, 0);
+        }
+        {
+            std::lock_guard<std::mutex> lk(char_mutex_);
+            chars_.assign(CHAR_COLS * CHAR_ROWS, ' ');
+        }
         mode_char_ = false;
         enabled_ = false;
         vsync_ = false;
@@ -54,40 +44,39 @@ public:
             case 0x08: return cursor_x_;
             case 0x0C: return cursor_y_;
             case 0x10: return pixel_addr_;
-            case 0x14: // Read pixel at pixel_addr_
-                if (pixel_addr_ < WIDTH * HEIGHT)
-                    return pixels_[pixel_addr_];
-                return 0;
-            case 0x18: // Read char at cursor
+            case 0x14: {
+                std::lock_guard<std::mutex> lk(pixel_mutex_);
+                return (pixel_addr_ < WIDTH * HEIGHT) ? pixels_[pixel_addr_] : 0;
+            }
+            case 0x18: {
+                std::lock_guard<std::mutex> lk(char_mutex_);
                 if (cursor_y_ < CHAR_ROWS && cursor_x_ < CHAR_COLS)
                     return chars_[cursor_y_ * CHAR_COLS + cursor_x_];
                 return 0;
+            }
             default: return 0;
         }
     }
 
     void write(uint32_t offset, uint32_t value) override {
         switch (offset) {
-            case 0x00: // CONTROL
+            case 0x00:
                 mode_char_ = (value & 1) != 0;
                 enabled_ = (value & 2) != 0;
                 break;
-            case 0x08: // CURSOR_X
-                cursor_x_ = value % CHAR_COLS;
-                break;
-            case 0x0C: // CURSOR_Y
-                cursor_y_ = value % CHAR_ROWS;
-                break;
-            case 0x10: // PIXEL_ADDR
-                pixel_addr_ = value % (WIDTH * HEIGHT);
-                break;
-            case 0x14: // PIXEL_DATA: write pixel at pixel_addr_, auto-increment
+            case 0x08: cursor_x_ = value % CHAR_COLS; break;
+            case 0x0C: cursor_y_ = value % CHAR_ROWS; break;
+            case 0x10: pixel_addr_ = value % (WIDTH * HEIGHT); break;
+            case 0x14: {
+                std::lock_guard<std::mutex> lk(pixel_mutex_);
                 if (pixel_addr_ < WIDTH * HEIGHT) {
                     pixels_[pixel_addr_] = (uint16_t)(value & 0xFFFF);
                     pixel_addr_++;
                 }
                 break;
-            case 0x18: // CHAR_WRITE: write char at cursor, auto-advance
+            }
+            case 0x18: {
+                std::lock_guard<std::mutex> lk(char_mutex_);
                 if (cursor_y_ < CHAR_ROWS && cursor_x_ < CHAR_COLS) {
                     chars_[cursor_y_ * CHAR_COLS + cursor_x_] = (uint8_t)(value & 0x7F);
                     cursor_x_++;
@@ -98,34 +87,35 @@ public:
                     }
                 }
                 break;
+            }
             default: break;
         }
     }
 
     void tick() override {
         tick_count_++;
-        // Simulate VSYNC: toggle every ~76800 ticks (320*240 pixels at 1 pixel/tick)
-        // Simplified: toggle every 1000 ticks
         if (tick_count_ % 1000 == 0) {
             vsync_ = !vsync_;
             frame_count_++;
         }
     }
 
-    bool irq_pending() override {
-        return false; // VGA doesn't generate interrupts in this model
+    bool irq_pending() override { return false; }
+
+    // ─── Host-side access (Python/main thread) ───
+
+    std::vector<uint16_t> get_framebuffer() const {
+        std::lock_guard<std::mutex> lk(pixel_mutex_);
+        return pixels_;
     }
 
-    // ─── Host-side access (Python API) ───
+    std::vector<uint8_t> get_char_buffer() const {
+        std::lock_guard<std::mutex> lk(char_mutex_);
+        return chars_;
+    }
 
-    // Get entire framebuffer as flat array (for rendering/export)
-    std::vector<uint16_t> get_framebuffer() const { return pixels_; }
-
-    // Get character buffer as string
-    std::vector<uint8_t> get_char_buffer() const { return chars_; }
-
-    // Get a single row of characters as string
     std::string get_char_row(uint32_t row) const {
+        std::lock_guard<std::mutex> lk(char_mutex_);
         if (row >= CHAR_ROWS) return "";
         std::string s(CHAR_COLS, ' ');
         for (uint32_t x = 0; x < CHAR_COLS; x++) {
@@ -138,14 +128,16 @@ public:
     uint32_t get_frame_count() const { return frame_count_; }
 
 private:
-    std::vector<uint16_t> pixels_;   // 320×240 RGB565
-    std::vector<uint8_t> chars_;     // 80×60 ASCII
-    bool mode_char_;
-    bool enabled_;
-    bool vsync_;
-    uint32_t cursor_x_;
-    uint32_t cursor_y_;
-    uint32_t pixel_addr_;
-    uint32_t frame_count_;
-    uint64_t tick_count_;
+    std::vector<uint16_t> pixels_;
+    std::vector<uint8_t> chars_;
+    mutable std::mutex pixel_mutex_;
+    mutable std::mutex char_mutex_;
+    bool mode_char_ = false;
+    bool enabled_ = false;
+    bool vsync_ = false;
+    uint32_t cursor_x_ = 0;
+    uint32_t cursor_y_ = 0;
+    uint32_t pixel_addr_ = 0;
+    uint32_t frame_count_ = 0;
+    uint64_t tick_count_ = 0;
 };

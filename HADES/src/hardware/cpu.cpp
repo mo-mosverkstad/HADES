@@ -20,16 +20,23 @@ void CPU::reset() {
     io_bus_.register_device(0xF080, &vga_);
 }
 
-void CPU::run(uint32_t max_instructions) {
-    uint32_t count = 0;
-    while (!halted_ && count < max_instructions) {
-        uint32_t instr = mem_.imem().read_word(pc_);
-        cycles_ += mem_.imem().drain_penalty();
+void CPU::step() {
+    if (halted_) return;
+    uint32_t instr = mem_.imem().read_word(pc_);
+    cycles_ += mem_.imem().drain_penalty();
+    execute(instr);
+    if (io_enabled_) io_bus_.tick_all();
+    cycles_++;
+}
 
-        execute(instr);
-        if (io_enabled_) io_bus_.tick_all();
-        cycles_++;
-        count++;
+void CPU::run(uint32_t max_instructions) {
+    if (max_instructions == 0) {
+        exec_.run_async(0);
+        return;
+    }
+    // Synchronous: run directly, no thread
+    for (uint32_t i = 0; i < max_instructions && !halted_; i++) {
+        step();
     }
 }
 
@@ -155,5 +162,3 @@ void CPU::execute(uint32_t instr) {
 
     regs_[0] = 0;
 }
-
-uint64_t CPU::get_cycles() const { return cycles_; }
