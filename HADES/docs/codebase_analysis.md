@@ -2497,3 +2497,429 @@ All existing demos and the CERBERUS `run.py` chunk-execution pattern continue to
 | I/O timing | Only during `run()` windows | Anytime (concurrent) |
 | Cycle budget guessing | Required | Optional (can use `run(0)`) |
 | API compatibility | — | 100% backward compatible |
+
+---
+
+## Phase 10. Target Architecture (Executor Pattern)
+
+### 10.1 Problem with Current Architecture
+
+The current design embeds threading directly into `CPUBase<T>`:
+
+```
+Current (Pattern A: Active Object):
+
+CPUBase<T>  ← CRTP template
+├── threading members (thread, mutex, cv, atomics)
+├── I/O device instances (uart_, gpio_, vga_)
+├── CPU state (regs_, pc_, mem_)
+├── helper methods (signal_run, wait_for_completion, ...)
+│
+├── CPU (single-cycle)       ← inherits ALL threading, never uses it
+├── PipelinedCPU             ← uses threading, also has pipeline state
+└── MultiCore                ← completely separate class, duplicates everything
+```
+
+Problems:
+1. `CPU` carries unused thread infrastructure (dead weight, confusing)
+2. `MultiCore` duplicates the entire instruction decoder and memory model
+3. No way to test pipeline logic without spawning threads
+4. Thread-safety is "by convention" — no structural enforcement of which thread owns what
+5. Every new method raises the question: "is this safe to call from Python during `run(0)`?"
+
+### 10.2 Target Architecture: Executor + Model
+
+**Principle:** Separate *what* runs (the hardware model) from *how* it runs (the thread).
+
+```
+Target (Pattern B: Executor + Model):
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Executor<T>  (generic)                          │
+│                                                                      │
+│  Responsibility: Thread lifecycle, start/stop/wait                   │
+│  Contains: std::thread, mutex, cv, budget_, shutdown_, running_      │
+│  API: run(N), stop(), is_running(), wait()                           │
+│  Internally calls: model_.step() in a loop                           │
+│                                                                      │
+│  Also forwards: load_program(), get_reg(), get_pc(), uart_send()... │
+│  (Transparent to Python — same API as before)                        │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ has-a (composition)
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      CPU Model (pure computation)                     │
+│                                                                      │
+│  NO threads. NO mutex. NO std::thread. NO condition_variable.        │
+│  Just hardware simulation.                                           │
+│                                                                      │
+│  Required interface:                                                 │
+│    void step()              — advance one cycle/instruction           │
+│    bool is_halted()         — has the CPU stopped?                   │
+│    void load_program(...)   — load binary into memory                │
+│    uint32_t get_reg(idx)    — read register                          │
+│    ...                                                               │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.3 Component Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Python / pybind11 Bindings                            │
+│                                                                              │
+│   hades.CPU           →  Executor<SingleCycleCPU>                            │
+│   hades.PipelinedCPU  →  Executor<PipelinedCPU>                              │
+│   hades.MultiCore     →  Executor<MultiCoreModel>                            │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+            ┌──────────────────────┼──────────────────────┐
+            │                      │                      │
+            ▼                      ▼                      ▼
+┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
+│ Executor<T>       │  │ Executor<T>       │  │ Executor<T>       │
+│ (same class for   │  │ (same class for   │  │ (same class for   │
+│  all CPU types)   │  │  all CPU types)   │  │  all CPU types)   │
+│                   │  │                   │  │                   │
+│ thread lifecycle  │  │ thread lifecycle  │  │ thread lifecycle  │
+│ run/stop/wait     │  │ run/stop/wait     │  │ run/stop/wait     │
+└────────┬──────────┘  └────────┬──────────┘  └────────┬──────────┘
+         │                      │                      │
+         ▼                      ▼                      ▼
+┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
+│ SingleCycleCPU    │  │ PipelinedCPU      │  │ MultiCoreModel    │
+│                   │  │                   │  │                   │
+│ step() = execute  │  │ step() = pipeline │  │ step() = round-   │
+│   one instruction │  │   _cycle()        │  │   robin N cores   │
+│                   │  │ stages, forward,  │  │                   │
+│ regs_, pc_, mem_  │  │ hazard detect     │  │ CoreState[N]      │
+│                   │  │ regs_, pc_, mem_  │  │ shared Memory     │
+└────────┬──────────┘  └────────┬──────────┘  └────────┬──────────┘
+         │                      │                      │
+         └──────────────────────┼──────────────────────┘
+                                │
+                                ▼
+              ┌─────────────────────────────────────┐
+              │        Thread-Safe I/O Devices       │
+              │                                     │
+              │  UART   — std::mutex on FIFOs       │
+              │  GPIO   — std::atomic<uint32_t>     │
+              │  VGA    — std::mutex on buffers     │
+              │  Timer  — CPU-only (no sharing)     │
+              │                                     │
+              │  Accessed by:                       │
+              │    CPU thread → read()/write()      │
+              │    Main thread → host_send/recv()   │
+              └─────────────────────────────────────┘
+```
+
+### 10.4 Executor<T> — The Thread Owner
+
+```cpp
+// executor.h — the ONLY class that knows about threads
+template<typename T>
+class Executor {
+public:
+    ~Executor() {
+        stop_requested_ = true;
+        { std::lock_guard<std::mutex> lk(mutex_);
+          shutdown_ = true; run_signaled_ = true; cv_run_.notify_one(); }
+        if (thread_.joinable()) thread_.join();
+    }
+
+    // ─── Thread control (Python-facing) ───
+
+    void run(uint32_t max_instructions = 1000000) {
+        if (running_) return;
+        if (!thread_.joinable()) {
+            thread_ = std::thread(&Executor::thread_main, this);
+        }
+        stop_requested_ = false;
+        if (max_instructions == 0) { signal_run(0); return; }
+        signal_run(max_instructions);
+        wait_for_completion();
+    }
+
+    void stop() { stop_requested_ = true; }
+    bool is_running() const { return running_; }
+
+    // ─── Forwarded API (unchanged from Python's perspective) ───
+
+    void load_program(const std::vector<uint8_t>& bin, uint32_t base = 0x1000) {
+        model_.load_program(bin, base);
+    }
+    uint32_t get_reg(uint32_t idx) const { return model_.get_reg(idx); }
+    uint32_t get_pc() const { return model_.get_pc(); }
+    uint64_t get_cycles() const { return model_.get_cycles(); }
+    // ... all other getters forwarded ...
+
+    // ─── I/O (thread-safe, callable anytime) ───
+
+    void uart_send(const std::vector<uint8_t>& data) { model_.uart_send(data); }
+    std::vector<uint8_t> uart_recv() { return model_.uart_recv(); }
+    void gpio_set_input(uint32_t v) { model_.gpio_set_input(v); }
+    uint32_t gpio_get_output() const { return model_.gpio_get_output(); }
+    std::string vga_get_char_row(uint32_t row) const { return model_.vga_get_char_row(row); }
+
+    // ─── Access to underlying model (for advanced use) ───
+    T& model() { return model_; }
+    const T& model() const { return model_; }
+
+private:
+    T model_;
+
+    std::thread thread_;
+    std::mutex mutex_;
+    std::condition_variable cv_run_, cv_done_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> stop_requested_{false};
+    bool shutdown_ = false;
+    uint64_t budget_ = 0;      // 0 = free-running
+    bool run_signaled_ = false;
+    bool done_signaled_ = false;
+
+    void signal_run(uint64_t n) { /* same as current */ }
+    void wait_for_run_signal()  { /* same as current */ }
+    void notify_completion()    { /* same as current */ }
+    void wait_for_completion()  { /* same as current */ }
+
+    void thread_main() {
+        while (true) {
+            wait_for_run_signal();
+            if (shutdown_) return;
+            running_ = true;
+
+            uint64_t count = 0;
+            uint64_t limit = (budget_ == 0) ? UINT64_MAX : budget_;
+            while (count < limit) {
+                if (stop_requested_) break;
+                if (model_.is_halted()) break;
+                model_.step();
+                count++;
+            }
+
+            running_ = false;
+            notify_completion();
+        }
+    }
+};
+```
+
+### 10.5 CPU Model Classes (Thread-Unaware)
+
+```cpp
+// single_cycle_cpu.h
+class SingleCycleCPU {
+public:
+    void step();                    // execute one instruction
+    bool is_halted() const;
+    void reset();
+    void load_program(const std::vector<uint8_t>& bin, uint32_t base);
+    uint32_t get_reg(uint32_t idx) const;
+    uint32_t get_pc() const;
+    uint64_t get_cycles() const;
+
+    // I/O access (delegates to thread-safe devices)
+    void uart_send(const std::vector<uint8_t>& data);
+    std::vector<uint8_t> uart_recv();
+    // ...
+
+private:
+    uint32_t regs_[32]{};
+    uint32_t pc_ = 0x1000;
+    bool halted_ = false;
+    uint64_t cycles_ = 0;
+    Memory mem_;
+    IOBus io_bus_;
+    UART uart_;        // internally thread-safe
+    GPIO gpio_;        // internally thread-safe
+    VGA vga_;          // internally thread-safe
+    Timer timer_;
+};
+
+// pipelined_cpu.h
+class PipelinedCPU {
+public:
+    void step();                    // one pipeline cycle
+    bool is_halted() const;
+    void reset();
+    void load_program(...);
+    uint32_t get_reg(uint32_t idx) const;
+    uint32_t get_pc() const;
+    uint64_t get_cycles() const;
+    uint64_t get_instret() const;
+    PerfCounters get_perf_counters() const;
+
+    // I/O access
+    void uart_send(const std::vector<uint8_t>& data);
+    // ...
+
+private:
+    uint32_t regs_[32]{};
+    uint32_t pc_ = 0x1000;
+    bool halted_ = false;
+    StageIFID ifid_;
+    StageEX ex_;
+    StageMEMWB memwb_;
+    PerfCounters perf_;
+    Memory mem_;
+    IOBus io_bus_;
+    UART uart_;
+    GPIO gpio_;
+    VGA vga_;
+    Timer timer_;
+
+    // Pipeline internals (all CPU-thread-only, no locks needed)
+    void stage_fetch_decode();
+    void stage_execute();
+    void stage_memory();
+    void stage_writeback();
+    uint32_t forward_reg(uint32_t idx) const;
+    bool detect_load_use_hazard() const;
+};
+
+// multicore_model.h
+class MultiCoreModel {
+public:
+    void step();                    // round-robin tick all cores
+    bool is_halted() const;        // true when all cores halted
+    void load_program(int core_id, const std::vector<uint8_t>& bin, uint32_t base);
+    uint32_t get_reg(int core_id, uint32_t idx) const;
+    // ...
+
+private:
+    CoreState cores_[N];
+    Memory shared_mem_;             // shared between cores
+    UART uart_;
+    GPIO gpio_;
+    Mutex hw_mutex_;
+};
+```
+
+### 10.6 Thread-Safe I/O Device Interfaces
+
+```cpp
+// uart.h — self-protecting, no external lock needed
+class UART : public IODevice {
+public:
+    // Called by CPU thread (via I/O bus dispatch):
+    uint32_t read(uint32_t offset) override;    // pops RX (locks rx_mutex_)
+    void write(uint32_t offset, uint32_t val) override; // pushes TX (locks tx_mutex_)
+
+    // Called by main thread (via Python):
+    void host_send(const std::vector<uint8_t>& data);   // pushes RX (locks rx_mutex_)
+    std::vector<uint8_t> host_recv();                    // pops TX (locks tx_mutex_)
+
+private:
+    std::queue<uint8_t> rx_fifo_;
+    std::vector<uint8_t> tx_output_;
+    std::mutex rx_mutex_;   // protects rx_fifo_
+    std::mutex tx_mutex_;   // protects tx_output_
+};
+
+// gpio.h — atomic, zero-overhead
+class GPIO : public IODevice {
+public:
+    uint32_t read(uint32_t offset) override;    // atomic load of input_pins_
+    void write(uint32_t offset, uint32_t val) override; // atomic store to data_out_
+
+    void set_input(uint32_t val);    // atomic store (main thread)
+    uint32_t get_output() const;     // atomic load (main thread)
+
+private:
+    std::atomic<uint32_t> input_pins_{0};
+    std::atomic<uint32_t> data_out_{0};
+    uint32_t direction_ = 0;         // CPU-thread-only
+    uint32_t edge_capture_ = 0;      // CPU-thread-only
+};
+
+// vga.h — mutex only on shared buffers
+class VGA : public IODevice {
+public:
+    uint32_t read(uint32_t offset) override;
+    void write(uint32_t offset, uint32_t val) override; // locks char/pixel mutex on writes
+
+    std::string get_char_row(uint32_t row) const;       // locks char_mutex_ (main thread)
+    std::vector<uint16_t> get_framebuffer() const;      // locks pixel_mutex_ (main thread)
+
+private:
+    std::vector<uint8_t> chars_;
+    std::vector<uint16_t> pixels_;
+    mutable std::mutex char_mutex_;    // protects chars_[]
+    mutable std::mutex pixel_mutex_;   // protects pixels_[]
+    uint32_t cursor_x_, cursor_y_;     // CPU-thread-only
+    uint32_t pixel_addr_;              // CPU-thread-only
+};
+```
+
+### 10.7 pybind11 Bindings (API Unchanged)
+
+```cpp
+PYBIND11_MODULE(hades, m) {
+    // Python sees the same API — Executor<T> is transparent
+    py::class_<Executor<SingleCycleCPU>>(m, "CPU")
+        .def(py::init<>())
+        .def("run", &Executor<SingleCycleCPU>::run, py::arg("max_instructions") = 1000000)
+        .def("stop", &Executor<SingleCycleCPU>::stop)
+        .def("is_running", &Executor<SingleCycleCPU>::is_running)
+        .def("get_reg", &Executor<SingleCycleCPU>::get_reg)
+        .def("get_pc", &Executor<SingleCycleCPU>::get_pc)
+        .def("load_program", &Executor<SingleCycleCPU>::load_program)
+        .def("uart_send", &Executor<SingleCycleCPU>::uart_send)
+        .def("uart_recv", &Executor<SingleCycleCPU>::uart_recv)
+        // ...
+        ;
+
+    py::class_<Executor<PipelinedCPU>>(m, "PipelinedCPU")
+        .def(py::init<>())
+        .def("run", &Executor<PipelinedCPU>::run, py::arg("max_instructions") = 1000000)
+        .def("stop", &Executor<PipelinedCPU>::stop)
+        // ... same pattern ...
+        ;
+}
+```
+
+### 10.8 Thread Ownership Diagram
+
+```
+MAIN THREAD (Python)                     CPU THREAD (Executor)
+════════════════════                     ═══════════════════════
+
+cpu.load_program(bin)  ─── must be called when !running ───►  (idle)
+cpu.run(10000)         ─── signal_run ──────────────────────►  model_.step() × N
+   (blocked)                                                    model_.step()
+   (blocked)                                                    model_.step()
+   (blocked)           ◄── notify_completion ──────────────── done
+cpu.get_reg(5)         ─── safe (thread idle) ─────────────►  (idle)
+
+cpu.run(0)             ─── signal_run ──────────────────────►  model_.step() ...
+   (returns immediately)                                        model_.step() ...
+cpu.uart_send([0x41])  ─── thread-safe (UART mutex) ────────    model_.step() ...
+cpu.vga_get_char_row() ─── thread-safe (VGA mutex) ─────────    model_.step() ...
+cpu.stop()             ─── sets atomic flag ────────────────►  checks → breaks
+   cpu.get_reg(5)      ─── safe (thread idle) ─────────────►  (idle)
+```
+
+### 10.9 Migration Path (Current → Target)
+
+| Step | Effort | Change |
+|------|--------|--------|
+| 1. Make I/O devices thread-safe | Small | Add mutex/atomic to UART, GPIO, VGA |
+| 2. Extract `Executor<T>` | Medium | Move threading members out of `CPUBase` into `Executor` |
+| 3. Remove `CPUBase` CRTP | Medium | CPU models become standalone classes with a `step()` method |
+| 4. Refactor `MultiCore` | Medium | Reuse `SingleCycleCPU` model (or `CoreState`) instead of duplicating decode logic |
+| 5. Update pybind bindings | Small | Bind `Executor<T>` instead of raw CPU classes |
+
+Steps 1-2 can be done independently. Step 3-4 is a larger refactor but doesn't change the Python API at all.
+
+### 10.10 Design Rules Summary
+
+| Rule | Rationale |
+|------|-----------|
+| CPU models have NO `#include <thread>` | Thread-unaware = testable without threads |
+| Only `Executor` owns `std::thread` | Single point of thread lifecycle management |
+| I/O devices are self-protecting | Callers don't need to know which thread they're on |
+| Getters are safe after `run(N)` returns | Temporal ordering guaranteed by Executor's signal/wait |
+| `run(0)` + I/O = safe anytime | Because I/O devices have internal locks |
+| `run(0)` + `get_reg()` = technically racy | But harmless (atomic-width read on x86); add assert in debug if paranoid |
+| One Executor = one thread = one model | Clean 1:1 ownership, no shared mutable state crossing boundaries |
