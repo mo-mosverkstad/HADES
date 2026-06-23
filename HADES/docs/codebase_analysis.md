@@ -2266,6 +2266,7 @@ When the Python object is garbage-collected, the C++ destructor must stop the th
 ```cpp
 ~CPUBase() {
     if (thread_started_) {
+        stop_requested_ = true;  // break out of run_pipeline if mid-execution
         {
             std::lock_guard<std::mutex> lk(run_mutex_);
             shutdown_ = true;       // tell thread to exit
@@ -2305,34 +2306,77 @@ void PipelinedCPU::thread_main() {
 
 ```cpp
 // Added to CPUBase<T>
-private:
+protected:
     std::thread exec_thread_;
     std::atomic<bool> running_{false};     // thread is actively executing
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> thread_started_{false};
+    bool shutdown_ = false;
     std::mutex run_mutex_;
     std::condition_variable run_cv_;
+    std::condition_variable done_cv_;
+    uint64_t budget_ = 0;  // 0 = free-running (infinite)
+    bool run_signaled_ = false;
+    bool done_signaled_ = false;
 
-    void thread_main();  // the thread's main loop
+    void signal_run(uint64_t n) {
+        std::lock_guard<std::mutex> lk(run_mutex_);
+        budget_ = n;
+        run_signaled_ = true;
+        run_cv_.notify_one();
+    }
+
+    void wait_for_run_signal() {
+        std::unique_lock<std::mutex> lk(run_mutex_);
+        run_cv_.wait(lk, [this]{ return run_signaled_; });
+        run_signaled_ = false;
+    }
+
+    void notify_completion() {
+        std::lock_guard<std::mutex> lk(run_mutex_);
+        done_signaled_ = true;
+        done_cv_.notify_one();
+    }
+
+    void wait_for_completion() {
+        std::unique_lock<std::mutex> lk(run_mutex_);
+        done_cv_.wait(lk, [this]{ return done_signaled_; });
+        done_signaled_ = false;
+    }
+```
+
+Destructor ensures clean shutdown:
+
+```cpp
+~CPUBase() {
+    if (thread_started_) {
+        stop_requested_ = true;  // break out of run_pipeline if mid-execution
+        {
+            std::lock_guard<std::mutex> lk(run_mutex_);
+            shutdown_ = true;
+            run_signaled_ = true;
+            run_cv_.notify_one();
+        }
+        exec_thread_.join();
+    }
+}
 ```
 
 #### Phase B: Modify `run()` Semantics
 
 ```cpp
 void PipelinedCPU::run(uint32_t max_instructions) {
+    if (running_) return;  // already executing — ignore re-entrant call
     if (!thread_started_) {
         exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
         thread_started_ = true;
     }
-
     stop_requested_ = false;
-
     if (max_instructions == 0) {
         // Free-running mode: signal thread to run indefinitely, return immediately
         signal_run(0);
         return;
     }
-
     // Bounded mode: signal thread to run N instructions, block until done
     signal_run(max_instructions);
     wait_for_completion();
@@ -2345,20 +2389,26 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 void PipelinedCPU::thread_main() {
     while (true) {
         wait_for_run_signal();  // sleep until run() is called
-
-        uint64_t target = (budget_ == INFINITE) ? UINT64_MAX : budget_;
-        uint64_t executed = 0;
-
+        if (shutdown_) return;
         running_ = true;
-        while (executed < target) {
-            if (stop_requested_) break;
-            if (halted_) break;
-            pipeline_cycle();
-            executed++;
-        }
+        run_pipeline(budget_, [&](){
+            return stop_requested_.load(std::memory_order_relaxed);
+        });
         running_ = false;
-
         notify_completion();  // wake up blocking run(N) caller if any
+    }
+}
+
+template<typename Predicate>
+void PipelinedCPU::run_pipeline(uint64_t max_instructions, Predicate check_stop) {
+    uint64_t start_cycles = perf_.mcycle;
+    uint64_t start_instret = perf_.minstret;
+    uint64_t max_cycles = max_instructions * 4;
+    while (max_instructions == 0 || perf_.mcycle - start_cycles < max_cycles) {
+        if (check_stop()) break;
+        pipeline_cycle();
+        if (halted_ && !memwb_.valid) break;
+        if (max_instructions != 0 && perf_.minstret - start_instret >= max_instructions) break;
     }
 }
 ```
