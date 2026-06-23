@@ -19,6 +19,7 @@ class CPUBase {
 public:
     ~CPUBase() {
         if (thread_started_) {
+            stop_requested_ = true;  // break out of run_pipeline if mid-execution
             {
                 std::lock_guard<std::mutex> lk(run_mutex_);
                 shutdown_ = true;
@@ -32,6 +33,7 @@ public:
     void load_program(const std::vector<uint8_t>& binary, uint32_t base_addr = 0x1000) {
         mem_.load(base_addr, binary);
         pc_ = base_addr;
+        halted_ = false;
     }
 
     void load_data(const std::vector<uint8_t>& data, uint32_t base_addr = 0x0000) {
@@ -99,7 +101,7 @@ protected:
     std::mutex run_mutex_;
     std::condition_variable run_cv_;
     std::condition_variable done_cv_;
-    uint32_t budget_ = 0;
+    uint64_t budget_ = 0;  // 0 = free-running (infinite)
     bool run_signaled_ = false;
     bool done_signaled_ = false;
 

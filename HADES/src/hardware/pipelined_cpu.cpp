@@ -42,6 +42,7 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 */
 
 void PipelinedCPU::run(uint32_t max_instructions) {
+    if (running_) return;  // already executing — ignore re-entrant call
     if (!thread_started_) {
         exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
         thread_started_ = true;
@@ -62,7 +63,7 @@ void PipelinedCPU::thread_main() {
         wait_for_run_signal();  // sleep until run() is called
         if (shutdown_) return;
         running_ = true;
-        run_pipeline((uint64_t) budget_, [&](){return stop_requested_.load(std::memory_order_relaxed);});
+        run_pipeline(budget_, [&](){ return stop_requested_.load(std::memory_order_relaxed); });
         running_ = false;
 
         notify_completion();  // wake up blocking run(N) caller if any
