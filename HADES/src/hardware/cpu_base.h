@@ -99,11 +99,9 @@ protected:
     std::mutex run_mutex_;
     std::condition_variable run_cv_;
     std::condition_variable done_cv_;
-    uint64_t budget_ = 0;
+    uint32_t budget_ = 0;
     bool run_signaled_ = false;
     bool done_signaled_ = false;
-
-    static constexpr uint64_t INFINITE = UINT64_MAX;
 
     void signal_run(uint64_t n) {
         std::lock_guard<std::mutex> lk(run_mutex_);

@@ -49,7 +49,7 @@ void PipelinedCPU::run(uint32_t max_instructions) {
     stop_requested_ = false;
     if (max_instructions == 0) {
         // Free-running mode: signal thread to run indefinitely, return immediately
-        signal_run(INFINITE);
+        signal_run(0);
         return;
     }
     // Bounded mode: signal thread to run N instructions, block until done
@@ -61,20 +61,24 @@ void PipelinedCPU::thread_main() {
     while (true) {
         wait_for_run_signal();  // sleep until run() is called
         if (shutdown_) return;
-
-        uint64_t target = (budget_ == INFINITE) ? UINT64_MAX : budget_;
-        uint64_t executed = 0;
-
         running_ = true;
-        while (executed < target) {
-            if (stop_requested_) break;
-            if (halted_) break;
-            pipeline_cycle();
-            executed++;
-        }
+        run_pipeline((uint64_t) budget_, [&](){return stop_requested_.load(std::memory_order_relaxed);});
         running_ = false;
 
         notify_completion();  // wake up blocking run(N) caller if any
+    }
+}
+
+template<typename Predicate>
+void PipelinedCPU::run_pipeline(uint64_t max_instructions, Predicate check_stop) {
+    uint64_t start_cycles = perf_.mcycle;
+    uint64_t start_instret = perf_.minstret;
+    uint64_t max_cycles = max_instructions * 4;
+    while (max_instructions == 0 || perf_.mcycle - start_cycles < max_cycles) {
+        if (check_stop()) break;
+        pipeline_cycle();
+        if (halted_ && !memwb_.valid) break;
+        if (max_instructions != 0 && perf_.minstret - start_instret >= max_instructions) break;
     }
 }
 

@@ -2233,28 +2233,28 @@ Python calls cpu.run(10000)
         │
         ▼
 ┌─ Main Thread ─────────────────────────┐    ┌─ CPU Thread ──────────────────────────┐
-│                                        │    │                                        │
-│ 1. First call? Create thread:          │    │ (thread starts here)                   │
-│    exec_thread_ = std::thread(...)     │───►│                                        │
-│                                        │    │ 2. wait_for_run_signal():              │
-│ 3. signal_run(10000):                  │    │    cv.wait(lk, []{return signaled;})   │
-│    lock mutex                          │    │    ... sleeping ...                     │
-│    budget_ = 10000                     │    │                                        │
-│    run_signaled_ = true                │    │                                        │
-│    cv.notify_one()  ──────────────────────► │ 4. Wakes up! budget_ = 10000          │
-│    unlock mutex                        │    │    running_ = true                     │
-│                                        │    │                                        │
-│ 5. wait_for_completion():              │    │ 6. Loop: pipeline_cycle() × 10000     │
-│    cv.wait(lk, []{return done;})       │    │    (checks stop_requested_ each cycle) │
-│    ... sleeping ...                     │    │                                        │
-│                                        │    │ 7. Done! running_ = false              │
-│                                        │  ◄─── notify_completion():                  │
-│ 8. Wakes up! Returns to Python.        │    │    done_signaled_ = true               │
-│                                        │    │    cv.notify_one()                     │
-│                                        │    │                                        │
-│                                        │    │ 9. Loop back to wait_for_run_signal()  │
-│                                        │    │    ... sleeping until next run() ...    │
-└────────────────────────────────────────┘    └────────────────────────────────────────┘
+│                                       │    │                                       │
+│ 1. First call? Create thread:         │    │ (thread starts here)                  │
+│    exec_thread_ = std::thread(...)    │───►│                                       │
+│                                       │    │ 2. wait_for_run_signal():             │
+│ 3. signal_run(10000):                 │    │    cv.wait(lk, []{return signaled;})  │
+│    lock mutex                         │    │    ... sleeping ...                   │
+│    budget_ = 10000                    │    │                                       │
+│    run_signaled_ = true               │    │                                       │
+│    cv.notify_one()  ─────────────────────► │ 4. Wakes up! budget_ = 10000          │
+│    unlock mutex                       │    │    running_ = true                    │
+│                                       │    │                                       │
+│ 5. wait_for_completion():             │    │ 6. Loop: pipeline_cycle() * 10000     │
+│    cv.wait(lk, []{return done;})      │    │    (checks stop_requested_ each cycle)│
+│    ... sleeping ...                   │    │                                       │
+│                                       │    │ 7. Done! running_ = false             │
+│                                       │  ◄─── notify_completion():                 │
+│ 8. Wakes up! Returns to Python.       │    │    done_signaled_ = true              │
+│                                       │    │    cv.notify_one()                    │
+│                                       │    │                                       │
+│                                       │    │ 9. Loop back to wait_for_run_signal() │
+│                                       │    │    ... sleeping until next run() ...  │
+└───────────────────────────────────────┘    └───────────────────────────────────────┘
 ```
 
 For `run(0)` (free-running), step 5 is skipped — main thread returns immediately, and the CPU thread runs until `halted_` or `stop()`.
@@ -2329,7 +2329,7 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 
     if (max_instructions == 0) {
         // Free-running mode: signal thread to run indefinitely, return immediately
-        signal_run(INFINITE);
+        signal_run(0);
         return;
     }
 

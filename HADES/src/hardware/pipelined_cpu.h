@@ -43,6 +43,9 @@ private:
     // CSR registers
     std::unordered_map<uint32_t, uint32_t> csrs_;
 
+    template<typename Predicate>
+    void run_pipeline(uint64_t max_instructions, Predicate check_stop);
+
     // Pipeline operations
     void pipeline_cycle();
     void thread_main();
