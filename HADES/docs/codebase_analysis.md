@@ -2956,8 +2956,8 @@ display.render(cpu, status_line="[Cycles: 103]")
 ```
 
 Internally:
-1. Calls `cpu.vga_get_char_buffer()` - gets 80×60 ASCII characters
-2. Calls `cpu.vga_get_color_buffer()` - gets 80×60 color attributes
+1. Calls `cpu.vga_get_char_buffer()` - gets 80*60 ASCII characters
+2. Calls `cpu.vga_get_color_buffer()` - gets 80*60 color attributes
 3. Maps color IDs to ANSI escape codes (0=white, 1=red, 2=green, 3=blue, 4=yellow, 5=cyan, 6=magenta)
 4. Clears terminal with `\033[H\033[J` and redraws
 
@@ -3017,3 +3017,339 @@ if cpu.get_cycles() == old_cycles:  # never true - pipeline always increments mc
 ```
 
 Key principle: **Python never interprets the data** - it just shuttles bytes between keyboard↔UART and VGA↔terminal. All logic (including color commands like `$r`) runs in the CPU assembly code.
+
+## Phase 12: MMU / Virtual Memory (Sv32)
+
+### 12.1 How the Classes Are Wired
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Python demo (demo_12_mmu.py)                                           │
+│    cpu.load_data(page_tables, phys_addr)   <- writes physical memory    │
+│    cpu.load_data(program, CODE_PHYS)       <- writes code at phys addr  │
+│    cpu.load_program([], VADDR_CODE)        <- sets PC to virtual addr   │
+│    cpu.set_mmu_satp(satp)                  <- enables translation       │
+│    cpu.run(100)                            <- go                        │
+└────────────────────────────────────────┬────────────────────────────────┘
+                                         │
+┌────────────────────────────────────────▼────────────────────────────────┐
+│  CPUBase<PipelinedCPU>                                                  │
+│    set_mmu_satp() -> mem_.mmu().set_satp()                              │
+│    get_tlb_hits() -> mem_.mmu().get_tlb_hits()                          │
+└────────────────────────────────────────┬────────────────────────────────┘
+                                         │
+┌────────────────────────────────────────▼────────────────────────────────┐
+│  PipelinedCPU::stage_fetch_decode()                                     │
+│    mem_.imem().read_word(pc_)   <- passes VIRTUAL address               │
+│    if (mem_.imem().has_fault()) halted_ = true                          │
+│                                                                         │
+│  PipelinedCPU::stage_memory()                                           │
+│    mem_.dmem().read_word(addr)  <- passes VIRTUAL address               │
+│    if (mem_.dmem().has_fault()) halted_ = true                          │
+└────────────────────────────────────────┬────────────────────────────────┘
+                                         │
+┌────────────────────────────────────────▼────────────────────────────────┐
+│  Memory                                                                 │
+│    Owns: MemHierarchy, MMU, two MemoryPorts                             │
+│    imem_=MemoryPort(hierarchy_, io_bus_, io_enabled_, mmu_, exec=true)  │
+│    dmem_=MemoryPort(hierarchy_, io_bus_, io_enabled_, mmu_, exec=false) │
+└────────────────────────────────────────┬────────────────────────────────┘
+                                         │
+┌────────────────────────────────────────▼────────────────────────────────┐
+│  MemoryPort::read_word(vaddr)                                           │
+│    1. do_translate(vaddr, is_write)                                     │
+│       -> if MMU disabled: return vaddr unchanged                        │
+│       -> if MMU enabled:  mmu_.translate(vaddr, is_write, is_exec,      │
+│                             [](paddr){ backing_.read_word(paddr) })     │
+│                           ↑ lambda reads physical memory for page walks │
+│       -> if fault: set faulted_=true, return 0                          │
+│    2. account_read(paddr)  <- cache/hierarchy latency                   │
+│    3. backing_.read_word(paddr)  <- actual physical memory read         │
+└────────────────────────────────────────┬────────────────────────────────┘
+                                         │
+┌────────────────────────────────────────▼────────────────────────────────┐
+│  MMU::translate(vaddr, is_write, is_exec, mem_read_fn)                  │
+│    1. if !enabled_ -> return vaddr (passthrough)                        │
+│    2. TLB lookup (16-entry, fully-associative, LRU)                     │
+│       -> hit: check permissions, return paddr                           │
+│       -> miss: walk page table ↓                                        │
+│    3. Page table walk:                                                  │
+│       a. root_pte = mem_read_fn(satp_ppn * 4096 + VPN1 * 4)             │
+│       b. l2_pte = mem_read_fn(root_pte.ppn * 4096 + VPN0 * 4)           │
+│       c. check valid + permissions                                      │
+│       d. insert into TLB                                                │
+│       e. return ppn * 4096 + offset                                     │
+│    4. On failure: set page_fault, return 0                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key design: no circular dependency.** The MMU needs to read physical memory to walk page tables, but it's inside the Memory class. Solution: MMU's `translate()` takes a lambda `mem_read_fn` that reads the backing store (`MemHierarchy`) directly — bypassing translation. The MemoryPort passes this lambda in, so the MMU never calls back through itself.
+
+### 12.2 MMU Design (`src/hardware/mmu.h`)
+
+Implements RISC-V Sv32 virtual memory:
+
+```
+Virtual Address (32-bit):
+┌──────────┬──────────┬──────────────┐
+│ VPN1(10) │ VPN0(10) │ offset(12)   │
+└──────────┴──────────┴──────────────┘
+     │           │           │
+     │           │           └─► byte within 4KB page
+     │           └─────────────► index into level-0 page table (1024 entries)
+     └─────────────────────────► index into root page table (1024 entries)
+```
+
+### 12.3 Page Table Entry (PTE) Format
+
+```
+┌────────────────────────┬─────┬───┬───┬───┬───┬───┬───┬───┬───┐
+│       PPN (22 bits)    │ RSW │ D │ A │ G │ U │ X │ W │ R │ V │
+└────────────────────────┴─────┴───┴───┴───┴───┴───┴───┴───┴───┘
+ bits [31:10]             [9:8] [7] [6] [5] [4] [3] [2] [1] [0]
+```
+
+| Field | Bits | Full name | Meaning |
+|-------|------|-----------|---------|
+| PPN | [31:10] | Physical Page Number | Which physical page this virtual page maps to (physical_addr = PPN * 4096) |
+| RSW | [9:8] | Reserved for Software | OS bookkeeping bits (hardware ignores them) |
+| D | [7] | Dirty | Set by hardware when the page is written to |
+| A | [6] | Accessed | Set by hardware when the page is read or written |
+| G | [5] | Global | Mapping applies to all address spaces (survives TLB flush) |
+| U | [4] | User | User-mode code can access; if 0, only supervisor/OS can |
+| X | [3] | eXecute | CPU can fetch instructions from this page |
+| W | [2] | Write | CPU can store data to this page |
+| R | [1] | Read | CPU can load data from this page |
+| V | [0] | Valid | Entry is active; if 0, accessing it = page fault |
+
+Typical combinations:
+- Code page: `V|R|X|U` — can read and execute, not write (prevents self-modifying code)
+- Data page: `V|R|W|U` — can read and write, not execute (prevents code injection)
+- Non-leaf (pointer to next level): `V` only — no R/W/X means "follow the pointer"
+
+```
+Virtual:   [VPN1(10) | VPN0(10) | offset(12)]  = 32 bits -> 4GB addressable virtual memory
+Physical:  [PPN(22)             | offset(12)]   = 34 bits -> 16GB addressable physical memory
+PTE:       [PPN(22) | flags(10)]                = 32 bits (fits in one word)
+```
+
+### 12.4 SATP CSR (address 0x180)
+
+```
+┌──────┬──────────┬────────────────────────┐
+│ MODE │   ASID   │         PPN            │
+│ (1)  │   (9)    │        (22)            │
+└──────┴──────────┴────────────────────────┘
+  bit 31  bits[30:22]    bits[21:0]
+
+MODE=0: No translation (bare/physical addressing)
+MODE=1: Sv32 translation enabled
+PPN:    Physical page number of root page table
+```
+
+Writing SATP automatically flushes the TLB (new address space). Can be written from:
+- Python: `cpu.set_mmu_satp(value)`
+- Assembly: `csrrw zero, 0x180, t0` (PipelinedCPU only, handles CSR 0x180 specially)
+
+### 12.5 TLB (Translation Lookaside Buffer)
+
+- 16 entries, fully-associative
+- LRU replacement (age counter per entry)
+- Each entry stores: VPN -> PPN + permission flags
+- Flushed on SATP write or explicit `mmu_flush_tlb()` call
+
+### 12.5.1 Full Virtual-to-Physical Translation (Visual Walkthrough)
+
+Example: CPU wants to load from virtual address `0x00001004`
+
+```
+STEP 0: Split the virtual address
+═══════════════════════════════════════════════════════════════
+
+  Virtual address: 0x00001004  (32 bits)
+
+  ┌──────────┬──────────┬──────────────┐
+  │ VPN1=0   │ VPN0=1   │ offset=0x004 │
+  │ (10 bits)│ (10 bits)│ (12 bits)    │
+  └──────────┴──────────┴──────────────┘
+       │           │           │
+       │           │           └─► byte 4 within the page (passes through unchanged)
+       │           └─────────────► index into level-0 page table
+       └─────────────────────────► index into root page table
+
+
+STEP 1: Find the root page table (from SATP register)
+═══════════════════════════════════════════════════════════════
+
+  SATP = 0x80000080
+  ┌──────┬──────────┬────────────────────────┐
+  │ MODE │   ASID   │      PPN = 0x80        │
+  │  =1  │   (0)    │                        │
+  └──────┴──────────┴────────────────────────┘
+
+  Root page table physical address = PPN * 4096 = 0x80 * 0x1000 = 0x80000
+
+
+STEP 2: Read level-1 (root) page table entry
+═══════════════════════════════════════════════════════════════
+
+  Index = VPN1 = 0
+  Address of entry = 0x80000 + (0 * 4) = 0x80000
+
+  ┌─── Root Page Table (at physical 0x80000) ───┐
+  │ Index 0: [PPN=0x81 | V=1, R=0,W=0,X=0]      │ <- we read this
+  │ Index 1: [0x00000000]  (invalid)            │
+  │ Index 2: [0x00000000]  (invalid)            │
+  │ ...                                         │
+  │ Index 1023: [0x00000000]                    │
+  └─────────────────────────────────────────────┘
+
+  R=W=X=0 means: NOT a leaf -> this PPN points to a level-0 page table
+  Next page table at: PPN * 4096 = 0x81 * 0x1000 = 0x81000
+
+
+STEP 3: Read level-0 page table entry
+═══════════════════════════════════════════════════════════════
+
+  Index = VPN0 = 1
+  Address of entry = 0x81000 + (1 * 4) = 0x81004
+
+  ┌─── Level-0 Page Table (at physical 0x81000) ──┐
+  │ Index 0: [0x00000000]  (invalid)              │
+  │ Index 1: [PPN=0x82 | V=1,R=1,W=1,U=1]         │ <- we read this
+  │ Index 2: [PPN=0x90 | V=1,R=1,X=1,U=1]         │
+  │ Index 3: [0x00000000]  (invalid)              │
+  │ ...                                           │
+  └───────────────────────────────────────────────┘
+
+  V=1, R=1 -> this IS a leaf (valid, readable)
+  PPN = 0x82 -> physical page at 0x82 * 4096 = 0x82000
+
+
+STEP 4: Check permissions
+═══════════════════════════════════════════════════════════════
+
+  Access type: LOAD (read)
+  PTE flags: R=1 (readable)
+  Result: ALLOWED
+
+
+STEP 5: Construct physical address
+═══════════════════════════════════════════════════════════════
+
+  Physical address = PPN * 4096 + offset
+                   = 0x82 * 0x1000 + 0x004
+                   = 0x82000 + 0x004
+                   = 0x82004
+
+  ┌──────────────────────────────────┐
+  │ Virtual  0x00001004              │
+  │           ↓ (MMU translates)     │
+  │ Physical 0x00082004              │
+  └──────────────────────────────────┘
+
+
+STEP 6: Cache in TLB for next time
+═══════════════════════════════════════════════════════════════
+
+  TLB entry added: VPN=1 -> PPN=0x82, flags=V|R|W|U
+
+  Next access to virtual 0x00001xxx (same page):
+    -> TLB hit, skip steps 2-5, instant translation
+
+
+FULL PICTURE:
+═══════════════════════════════════════════════════════════════
+
+  SATP register
+       │
+       ▼ (PPN = 0x80)
+  ┌─────────────────────── Physical Memory ───────────────────────┐
+  │                                                               │
+  │  0x80000: ROOT PAGE TABLE (1024 entries * 4 bytes = 4KB)      │
+  │  ┌────────────────────────────────────────────┐               │
+  │  │ [0]: PPN=0x81, V=1 (-> next level)         │─── VPN1=0 ──┐ │
+  │  │ [1]: invalid                               │             │ │
+  │  │ ...                                        │             │ │
+  │  └────────────────────────────────────────────┘             │ │
+  │                                                             │ │
+  │  0x81000: LEVEL-0 PAGE TABLE (1024 entries * 4 bytes)  ◄────┘ │
+  │  ┌────────────────────────────────────────────┐               │
+  │  │ [0]: invalid                               │               │
+  │  │ [1]: PPN=0x82, V|R|W|U (data page)         │─── VPN0=1 ──┐ │
+  │  │ [2]: PPN=0x90, V|R|X|U (code page)         │             │ │
+  │  │ [3]: invalid (page fault if accessed!)     │             │ │
+  │  │ ...                                        │             │ │
+  │  └────────────────────────────────────────────┘             │ │
+  │                                                             │ │
+  │  0x82000: DATA PAGE (4KB)  ◄────────────────────────────────┘ │
+  │  ┌────────────────────────────────────────────┐               │
+  │  │ offset 0x000: [0x42, 0x00, 0x00, 0x00]     │ ← data here   │
+  │  │ offset 0x004: [...]                        │               │
+  │  │ ...                                        │               │
+  │  └────────────────────────────────────────────┘               │
+  │                                                               │
+  │  0x90000: CODE PAGE (4KB)                                     │
+  │  ┌────────────────────────────────────────────┐               │
+  │  │ LUI t1, 1        (t1 = 0x1000)             │               │
+  │  │ LW t0, 0(t1)     (load from virtual 0x1000)│               │
+  │  │ ADDI t2, t0, 1                             │               │
+  │  │ ECALL            (halt)                    │               │
+  │  └────────────────────────────────────────────┘               │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
+```
+
+### 12.6 Page Faults
+
+When translation fails (invalid PTE or permission violation):
+
+| Fault type | Trigger | CPU behavior |
+|---|---|---|
+| Instruction page fault | Fetch from unmapped/non-executable page | `has_fault()` -> halt |
+| Load page fault | Load from unmapped/non-readable page | `has_fault()` -> halt |
+| Store page fault | Store to unmapped/non-writable page | `has_fault()` -> halt |
+
+Currently, page faults halt the CPU. A future trap mechanism would jump to an OS handler that loads the page from disk and retries.
+
+### 12.7 Where Pages Are "Loaded"
+
+HADES has no OS or disk yet. The Python script acts as the bootloader/OS:
+
+```python
+# Python = "OS" that pre-loads everything into physical memory
+cpu.load_data(page_table_bytes, 0x80000)   # OS sets up page tables
+cpu.load_data(program_bytes, 0x90000)       # OS loads code into RAM
+cpu.load_data(data_bytes, 0x82000)          # OS loads data into RAM
+cpu.set_mmu_satp(satp)                      # OS enables address translation
+cpu.run()                                   # CPU executes with virtual addresses
+```
+
+`load_data()` writes directly to physical memory (bypasses MMU — like DMA or a bootloader). The page tables are just a lookup structure saying "virtual X lives at physical Y". They don't load anything — the data must already be there.
+
+### 12.8 Python API
+
+```python
+cpu.set_mmu_satp(satp)       # Enable/configure MMU
+cpu.get_mmu_satp()           # Read SATP (Supervisor Address Translation and Protection)
+cpu.mmu_flush_tlb()          # Invalidate all TLB entries
+cpu.get_tlb_hits()           # TLB hit count
+cpu.get_tlb_misses()         # TLB miss count (page walks triggered)
+cpu.get_page_faults()        # Invalid/permission-denied translations
+```
+
+### 12.9 Demo Output (`make demo-12`)
+
+```
+  Program (16 bytes) loaded at physical 0x90000
+  PC set to virtual 0x02000
+  MMU enabled (SATP = 0x80000080)
+
+  Results:
+    t0 (loaded from virtual 0x1000) = 0x42 (expected 0x42)
+    t2 (t0 + 1)                     = 0x43 (expected 0x43)
+    Cycles: 8
+    TLB hits:    4  (instruction fetches from cached code page)
+    TLB misses:  2  (first access to code page + data page)
+    Page faults: 0
+```

@@ -91,7 +91,8 @@ private:
 // Routes addresses and computes access latency
 class MemHierarchy {
 public:
-    static constexpr uint32_t ONCHIP_SIZE = 65536; // 64KB on-chip RAM
+    // static constexpr uint32_t ONCHIP_SIZE = 65536; // 64KB on-chip RAM
+    static constexpr uint32_t ONCHIP_SIZE = 1048576; // 1MB (expanded for MMU page tables)
 
     MemHierarchy() : data_(ONCHIP_SIZE, 0), enabled_(false), onchip_latency_(1) {}
 

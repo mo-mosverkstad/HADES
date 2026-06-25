@@ -82,6 +82,9 @@ demo-08d: engine
 demo-11: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_11_echo_terminal.py
 
+demo-12: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_12_mmu.py
+
 demo-all: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_01_basic_cpu.py
 	@echo ""

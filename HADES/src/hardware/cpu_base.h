@@ -53,6 +53,14 @@ public:
     std::vector<uint8_t> vga_get_color_buffer() const { return vga_.get_color_buffer(); }
     std::string vga_get_char_row(uint32_t row) const { return vga_.get_char_row(row); }
 
+    // MMU / Virtual Memory (delegates to Memory's internal MMU)
+    void set_mmu_satp(uint32_t satp) { mem_.mmu().set_satp(satp); }
+    uint32_t get_mmu_satp() const { return mem_.mmu().get_satp(); }
+    void mmu_flush_tlb() { mem_.mmu().flush_tlb(); }
+    uint64_t get_tlb_hits() const { return mem_.mmu().get_tlb_hits(); }
+    uint64_t get_tlb_misses() const { return mem_.mmu().get_tlb_misses(); }
+    uint64_t get_page_faults() const { return mem_.mmu().get_page_faults(); }
+
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;

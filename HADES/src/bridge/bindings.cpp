@@ -40,7 +40,13 @@ PYBIND11_MODULE(hades, m) {
         .def("vga_get_framebuffer", &CPU::vga_get_framebuffer)
         .def("vga_get_char_buffer", &CPU::vga_get_char_buffer)
         .def("vga_get_color_buffer", &CPU::vga_get_color_buffer)
-        .def("vga_get_char_row", &CPU::vga_get_char_row, py::arg("row"));
+        .def("vga_get_char_row", &CPU::vga_get_char_row, py::arg("row"))
+        .def("set_mmu_satp", &CPU::set_mmu_satp, py::arg("satp"))
+        .def("get_mmu_satp", &CPU::get_mmu_satp)
+        .def("mmu_flush_tlb", &CPU::mmu_flush_tlb)
+        .def("get_tlb_hits", &CPU::get_tlb_hits)
+        .def("get_tlb_misses", &CPU::get_tlb_misses)
+        .def("get_page_faults", &CPU::get_page_faults);
 
     py::class_<PerfCounters>(m, "PerfCounters")
         .def_readonly("mcycle", &PerfCounters::mcycle)
@@ -81,7 +87,13 @@ PYBIND11_MODULE(hades, m) {
         .def("vga_get_framebuffer", &PipelinedCPU::vga_get_framebuffer)
         .def("vga_get_char_buffer", &PipelinedCPU::vga_get_char_buffer)
         .def("vga_get_color_buffer", &PipelinedCPU::vga_get_color_buffer)
-        .def("vga_get_char_row", &PipelinedCPU::vga_get_char_row, py::arg("row"));
+        .def("vga_get_char_row", &PipelinedCPU::vga_get_char_row, py::arg("row"))
+        .def("set_mmu_satp", &PipelinedCPU::set_mmu_satp, py::arg("satp"))
+        .def("get_mmu_satp", &PipelinedCPU::get_mmu_satp)
+        .def("mmu_flush_tlb", &PipelinedCPU::mmu_flush_tlb)
+        .def("get_tlb_hits", &PipelinedCPU::get_tlb_hits)
+        .def("get_tlb_misses", &PipelinedCPU::get_tlb_misses)
+        .def("get_page_faults", &PipelinedCPU::get_page_faults);
 
     py::class_<MultiCore>(m, "MultiCore")
         .def(py::init<>())

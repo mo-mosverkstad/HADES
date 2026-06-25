@@ -4,17 +4,22 @@
 #include "cache.h"
 #include "mem_hierarchy.h"
 #include "io_bus.h"
+#include "mmu.h"
 
 // MemoryPort: One access path into the memory subsystem.
-// Internally holds a cache and references the shared backing store.
-// The CPU doesn't know or care about caches — it just reads/writes.
+// Handles address translation (MMU), caching, and hierarchy latency transparently.
+// The CPU doesn't know or care about any of this — it just reads/writes virtual addresses.
 
 class MemoryPort {
 public:
-    explicit MemoryPort(MemHierarchy& backing, IOBus& io_bus, const bool& io_enabled)
-        : backing_(backing), io_bus_(io_bus), io_enabled_(io_enabled) {}
+    explicit MemoryPort(MemHierarchy& backing, IOBus& io_bus, const bool& io_enabled,
+                        MMU& mmu, bool is_exec_port)
+        : backing_(backing), io_bus_(io_bus), io_enabled_(io_enabled),
+          mmu_(mmu), is_exec_port_(is_exec_port) {}
 
     uint8_t read_byte(uint32_t addr) {
+        addr = do_translate(addr, false);
+        if (faulted_) return 0;
         account_read(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
@@ -26,6 +31,8 @@ public:
     }
 
     uint16_t read_half(uint32_t addr) {
+        addr = do_translate(addr, false);
+        if (faulted_) return 0;
         account_read(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
@@ -34,7 +41,6 @@ public:
             if (byte_offset <= 2) {
                 return static_cast<uint16_t>(word >> (byte_offset * 8));
             }
-            // Crosses word boundary: low byte from this word, high byte from next
             uint32_t word2 = io_bus_.read(aligned + 4);
             return static_cast<uint16_t>((word >> 24) | (word2 << 8));
         }
@@ -42,13 +48,14 @@ public:
     }
 
     uint32_t read_word(uint32_t addr) {
+        addr = do_translate(addr, false);
+        if (faulted_) return 0;
         account_read(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
             uint32_t word = io_bus_.read(aligned);
             uint32_t byte_offset = addr & 0x3;
             if (byte_offset == 0) return word;
-            // Unaligned: spans two I/O words
             uint32_t word2 = io_bus_.read(aligned + 4);
             uint32_t shift = byte_offset * 8;
             return (word >> shift) | (word2 << (32 - shift));
@@ -57,6 +64,8 @@ public:
     }
 
     void write_byte(uint32_t addr, uint8_t val) {
+        addr = do_translate(addr, true);
+        if (faulted_) return;
         account_write(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
@@ -71,6 +80,8 @@ public:
     }
 
     void write_half(uint32_t addr, uint16_t val) {
+        addr = do_translate(addr, true);
+        if (faulted_) return;
         account_write(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
@@ -81,7 +92,6 @@ public:
                 word = (word & ~(0xFFFFu << shift)) | (static_cast<uint32_t>(val) << shift);
                 io_bus_.write(aligned, word);
             } else {
-                // Crosses word boundary
                 word = (word & 0x00FFFFFFu) | (static_cast<uint32_t>(val & 0xFF) << 24);
                 io_bus_.write(aligned, word);
                 uint32_t word2 = io_bus_.read(aligned + 4);
@@ -94,6 +104,8 @@ public:
     }
 
     void write_word(uint32_t addr, uint32_t val) {
+        addr = do_translate(addr, true);
+        if (faulted_) return;
         account_write(addr);
         if (is_io(addr)) {
             uint32_t aligned = addr & ~0x3u;
@@ -101,7 +113,6 @@ public:
             if (byte_offset == 0) {
                 io_bus_.write(aligned, val);
             } else {
-                // Unaligned: spans two I/O words
                 uint32_t shift = byte_offset * 8;
                 uint32_t word1 = io_bus_.read(aligned);
                 uint32_t mask1 = (1u << shift) - 1u;
@@ -120,6 +131,10 @@ public:
 
     uint32_t drain_penalty() { uint32_t p = penalty_; penalty_ = 0; return p; }
 
+    // Check if last access caused a page fault
+    bool has_fault() const { return faulted_; }
+    void clear_fault() { faulted_ = false; }
+
     // Configuration (called by Memory composite, not by CPU)
     void set_cache_enabled(bool enabled) { cache_enabled_ = enabled; }
     void set_miss_penalty(uint32_t cycles) { miss_penalty_ = cycles; }
@@ -128,17 +143,32 @@ public:
     uint64_t get_cache_misses() const { return cache_.get_misses(); }
     uint64_t get_cache_hits() const { return cache_.get_hits(); }
 
-    void reset() { cache_.reset(); penalty_ = 0; }
+    void reset() { cache_.reset(); penalty_ = 0; faulted_ = false; }
 
 private:
     MemHierarchy& backing_;
     IOBus& io_bus_;
     const bool& io_enabled_;
+    MMU& mmu_;
+    bool is_exec_port_;  // true for instruction port, false for data port
     Cache cache_;
 
     bool cache_enabled_ = false;
     uint32_t miss_penalty_ = 20;
     uint32_t penalty_ = 0;
+    bool faulted_ = false;
+
+    uint32_t do_translate(uint32_t vaddr, bool is_write) {
+        faulted_ = false;
+        if (!mmu_.is_enabled()) return vaddr;
+        uint32_t paddr = mmu_.translate(vaddr, is_write, is_exec_port_,
+            [this](uint32_t pa) { return backing_.read_word(pa); });
+        if (mmu_.get_last_fault() != MMU::NONE) {
+            faulted_ = true;
+            return 0;
+        }
+        return paddr;
+    }
 
     bool is_io(uint32_t addr) const {
         return io_enabled_ && io_bus_.is_io_address(addr);
@@ -163,13 +193,15 @@ private:
 
 // Memory: The entire memory subsystem as seen by the processor.
 // Exposes two ports: imem (instruction) and dmem (data).
-// Caches, hierarchy, SDRAM — all internal details.
+// Caches, hierarchy, SDRAM, MMU — all internal details.
+// The CPU sees only virtual addresses; translation is transparent.
 
 class Memory {
 public:
     Memory(IOBus& io_bus, const bool& io_enabled)
         : hierarchy_(), io_bus_(io_bus),
-          imem_(hierarchy_, io_bus, io_enabled), dmem_(hierarchy_, io_bus, io_enabled) {}
+          imem_(hierarchy_, io_bus, io_enabled, mmu_, true),
+          dmem_(hierarchy_, io_bus, io_enabled, mmu_, false) {}
 
     // ─── Port access (what the CPU sees) ────────────────────────────────
 
@@ -193,6 +225,11 @@ public:
         dmem_.set_cache_enabled(enabled);
     }
 
+    // ─── MMU ────────────────────────────────────────────────────────────
+
+    MMU& mmu() { return mmu_; }
+    const MMU& mmu() const { return mmu_; }
+
     // ─── Stats (exposed for Python bindings) ────────────────────────────
 
     SDRAMModel& sdram() { return hierarchy_.sdram(); }
@@ -209,10 +246,12 @@ public:
         hierarchy_.clear();
         imem_.reset();
         dmem_.reset();
+        mmu_.reset();
     }
 
 private:
     MemHierarchy hierarchy_;
+    MMU mmu_;
     IOBus& io_bus_;
     MemoryPort imem_;
     MemoryPort dmem_;

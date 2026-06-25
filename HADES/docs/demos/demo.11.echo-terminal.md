@@ -1,4 +1,4 @@
-# Demo 13 - Echo Terminal (Real-Time Character Display)
+# Demo 11 - Echo Terminal (Real-Time Character Display)
 
 This demo simulates a real serial terminal: characters typed on the keyboard are sent to the CPU via UART, the CPU echoes them back and displays them on the VGA screen. The Python host refreshes the display after each input.
 

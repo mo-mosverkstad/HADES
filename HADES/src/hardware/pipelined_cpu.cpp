@@ -91,6 +91,7 @@ void PipelinedCPU::stage_memory() {
             case 0b100: val = mem_.dmem().read_byte(addr); break;
             case 0b101: val = mem_.dmem().read_half(addr); break;
         }
+        if (mem_.dmem().has_fault()) { halted_ = true; return; }
         perf_.mcycle += mem_.dmem().drain_penalty();
         memwb_.result = val;
     } else if (ex_.is_store) {
@@ -102,6 +103,7 @@ void PipelinedCPU::stage_memory() {
             case 0b001: mem_.dmem().write_half(addr, ex_.rs2_val & 0xFFFF); break;
             case 0b010: mem_.dmem().write_word(addr, ex_.rs2_val); break;
         }
+        if (mem_.dmem().has_fault()) { halted_ = true; return; }
         mem_.dmem().drain_penalty();
 
         memwb_.writes_rd = false;
@@ -178,6 +180,7 @@ void PipelinedCPU::stage_fetch_decode() {
     if (ex_.is_branch && ex_.branch_taken) return;
 
     ifid_.instr = mem_.imem().read_word(pc_);
+    if (mem_.imem().has_fault()) { halted_ = true; return; }
     perf_.mcycle += mem_.imem().drain_penalty();
 
     ifid_.pc = pc_;
@@ -328,6 +331,7 @@ uint32_t PipelinedCPU::csr_read(uint32_t addr) const {
         case CSR_MINSTRETH: return (uint32_t)(perf_.minstret >> 32);
         case CSR_MHPMCOUNTER3: return (uint32_t)(perf_.stalls_data);
         case CSR_MHPMCOUNTER4: return (uint32_t)(perf_.stalls_branch);
+        case 0x180: return mem_.mmu().get_satp(); // SATP
         default: {
             auto it = csrs_.find(addr);
             return (it != csrs_.end()) ? it->second : 0;
@@ -337,4 +341,7 @@ uint32_t PipelinedCPU::csr_read(uint32_t addr) const {
 
 void PipelinedCPU::csr_write(uint32_t addr, uint32_t value) {
     csrs_[addr] = value;
+    if (addr == 0x180) {
+        mem_.mmu().set_satp(value); // SATP: configure MMU
+    }
 }
