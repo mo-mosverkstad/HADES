@@ -50,6 +50,7 @@ public:
     uint32_t gpio_get_output() const { return gpio_.get_output(); }
     std::vector<uint16_t> vga_get_framebuffer() const { return vga_.get_framebuffer(); }
     std::vector<uint8_t> vga_get_char_buffer() const { return vga_.get_char_buffer(); }
+    std::vector<uint8_t> vga_get_color_buffer() const { return vga_.get_color_buffer(); }
     std::string vga_get_char_row(uint32_t row) const { return vga_.get_char_row(row); }
 
 protected:

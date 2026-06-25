@@ -1,4 +1,4 @@
-# HADES — Codebase Analysis
+# HADES - Codebase Analysis
 
 ---
 
@@ -16,17 +16,17 @@ In real world, according to the diagram below, after compiling through the code 
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  Programmer writes C code                                               │
-│       ↓ (gcc compiler)                                                  │
+│       V (gcc compiler)                                                  │
 │  Assembly (.S file)                                                     │
-│       ↓ (assembler: riscv64-as)                                         │
+│       V (assembler: riscv64-as)                                         │
 │  Machine code (binary, 0s and 1s)                                       │
-│       ↓ (loaded into chip's flash/RAM)                                  │
+│       V (loaded into chip's flash/RAM)                                  │
 │  Hardware CPU executes instructions                                     │
-│       ↓ (transistors switch, current flows)                             │
+│       V (transistors switch, current flows)                             │
 │  Power consumption varies with data                                     │
-│       ↓ (oscilloscope measures power pin)                               │
-│  Power trace (analog signal → digitized)                                │
-│       ↓ (statistical analysis)                                          │
+│       V (oscilloscope measures power pin)                               │
+│  Power trace (analog signal -> digitized)                               │
+│       V (statistical analysis)                                          │
 │  Attacker recovers secret key                                           │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -37,15 +37,15 @@ In real world, according to the diagram below, after compiling through the code 
 │                                                                         │
 │  Programmer writes assembly OR                                          │
 │  Python generates machine code directly (aes_program.py)                │
-│       ↓                                                                 │
+│       V                                                                 │
 │  Machine code (list of 32-bit integers)                                 │
-│       ↓ (loaded into simulated memory via load_program())               │
+│       V (loaded into simulated memory via load_program())               │
 │  C++ CPU class interprets each instruction                              │
-│       ↓ (on each register write, calls leak_.record())                  │
+│       V (on each register write, calls leak_.record())                  │
 │  Leakage engine computes HW(value) + noise                              │
-│       ↓ (appends to trace vector)                                       │
+│       V (appends to trace vector)                                       │
 │  Python reads trace via get_power_trace()                               │
-│       ↓ (numpy correlation analysis)                                    │
+│       V (numpy correlation analysis)                                    │
 │  Attacker recovers secret key                                           │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -59,36 +59,36 @@ In real world, according to the diagram below, after compiling through the code 
 │ ─────────────────────────────────────────────────────────────────────── │
 │ layer5_attacker/cpa.py, layer5_attacker/exp_cpa_basic.py                │
 │                                                                         │
-│ Role: The "attacker" — collects traces, runs statistical analysis,      │
+│ Role: The "attacker" - collects traces, runs statistical analysis,      │
 │       recovers secret keys. This is what a real attacker does with      │
 │       an oscilloscope and a computer.                                   │
 │                                                                         │
 │ Real-world equivalent: Attacker's lab bench                             │
-│   • cpa.py              = oscilloscope + analysis laptop                │
-│   • get_power_trace()   = current probe on VCC pin                      │
-│   • numpy correlation   = MATLAB/Python statistical analysis            │
-│   • random plaintexts   = signal generator feeding the board            │
+│   - cpa.py              = oscilloscope + analysis laptop                │
+│   - get_power_trace()   = current probe on VCC pin                      │
+│   - numpy correlation   = MATLAB/Python statistical analysis            │
+│   - random plaintexts   = signal generator feeding the board            │
 │                                                                         │
 │ The attacker NEVER runs code on the board. They:                        │
 │   1. Provide inputs (chosen plaintexts)                                 │
 │   2. Let the board compute (encryption)                                 │
 │   3. Measure physical side-effects (power trace)                        │
-│   4. Analyze offline (correlation → recover key)                        │
+│   4. Analyze offline (correlation -> recover key)                       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ LAYER 4: Program Generation (Python + ASM)                              │
 │ ─────────────────────────────────────────────────────────────────────── │
 │ layer4_software/aes_program.py, layer4_software/aes_ref.py              │
 │ programs/*.S (RISC-V assembly: games, echo terminal, tests)             │
 │                                                                         │
-│ Role: Acts as "compiler + assembler" — generates machine code           │
+│ Role: Acts as "compiler + assembler" - generates machine code           │
 │       (32-bit RISC-V instructions) from high-level description.         │
 │       Also prepares data (S-box table, keys) to load into memory.       │
 │                                                                         │
 │ Real-world equivalent: Cross-compiler + flash programmer                │
-│   • aes_program.py (generates code)  = gcc cross-compiler               │
-│   • cpu.load_program(binary)         = JTAG flash write                 │
-│   • runner.py calls cpu.run()        = power switch + clock crystal     │
-│   • test_cpu.py reads registers      = JTAG debugger reading results    │
+│   - aes_program.py (generates code)  = gcc cross-compiler               │
+│   - cpu.load_program(binary)         = JTAG flash write                 │
+│   - runner.py calls cpu.run()        = power switch + clock crystal     │
+│   - test_cpu.py reads registers      = JTAG debugger reading results    │
 │                                                                         │
 │ The scripts run on your PC (host tools), but the machine code they      │
 │ produce crosses the boundary and executes ON the simulated board.       │
@@ -97,22 +97,22 @@ In real world, according to the diagram below, after compiling through the code 
 ├─────────────────────────────────────────────────────────────────────────┤
 │ LAYER 3: Python ↔ C++ Bridge (pybind11)                                 │
 │ ─────────────────────────────────────────────────────────────────────── │
-│ layer3_bridge/bindings.cpp → build/hades.*.so                           │
+│ layer3_bridge/bindings.cpp -> build/hades.*.so                          │
 │                                                                         │
 │ Role: Translates Python calls into C++ method calls.                    │
-│       Python list → std::vector, Python int → uint32_t, etc.            │
-│       This is just plumbing — no simulation logic here.                 │
+│       Python list -> std::vector, Python int -> uint32_t, etc.          │
+│       This is just plumbing - no simulation logic here.                 │
 │                                                                         │
 │ Direction: Python calls C++ (ONE-WAY ONLY).                             │
 │       C++ never calls Python. The engine is a passive library.          │
 │                                                                         │
 │ Real-world equivalent: the CONNECTOR/SOCKET on the board                │
 │       (BNC connector, JTAG header, DB9 serial port).                    │
-│       The connector does no work — it just provides a standardized      │
+│       The connector does no work - it just provides a standardized      │
 │       interface so external tools can access the board's internals.     │
 │                                                                         │
 │ Call flow:                                                              │
-│   Layer 5/4/2 (Python) ──calls──→ Layer 3 (pybind11) ──calls──→ Layer 1 │
+│   Layer 5/4/2 (Python) ──calls──-> Layer 3 (pybind11)──calls──-> Layer1 │
 │   (attacker/tools/peripherals)    (type translation)    (C++ engine)    │
 │                                                                         │
 │ Everything flows downward. C++ doesn't know Python exists.              │
@@ -124,9 +124,9 @@ In real world, according to the diagram below, after compiling through the code 
 │ Role: The "other end" of simulated I/O devices.                         │
 │       Bridges between real world (keyboard, terminal) and simulated     │
 │       hardware (UART FIFO, VGA buffer).                                 │
-│       - TerminalDisplay: reads VGA char+color → renders ANSI colors     │
-│       - TerminalInput: reads keyboard → sends to UART                   │
-│       - AssemblyLoader: gcc toolchain → binary → load into CPU          │
+│       - TerminalDisplay: reads VGA char+color -> renders ANSI colors    │
+│       - TerminalInput: reads keyboard -> sends to UART                  │
+│       - AssemblyLoader: gcc toolchain -> binary -> load into CPU        │
 │                                                                         │
 │ What does Layer 2 represent in the real world?                          │
 │                                                                         │
@@ -134,26 +134,26 @@ In real world, according to the diagram below, after compiling through the code 
 │                                                                         │
 │ Mapping 1: Direct connection (embedded kiosk / ATM / arcade)            │
 │                                                                         │
-│   Keyboard ──USB──→ Board UART RX     (no PC involved)                  │
-│   VGA Monitor ←──VGA cable── Board VGA output                           │
+│   Keyboard ──USB──-> Board UART RX     (no PC involved)                 │
+│   VGA Monitor <-──VGA cable── Board VGA output                          │
 │                                                                         │
 │   Layer 2 = the keyboard and monitor directly wired to the board.       │
 │                                                                         │
 │ Mapping 2: PC in the middle (developer workstation)                     │
 │                                                                         │
-│   Keyboard → PC → PuTTY ──serial cable──→ Board UART RX                 │
-│   Monitor ← PC ← PuTTY ←──serial cable── Board UART TX                  │
+│   Keyboard -> PC -> PuTTY ──serial cable──-> Board UART RX              │
+│   Monitor <- PC <- PuTTY <-──serial cable── Board UART TX               │
 │                                                                         │
 │   Layer 2 = the PC + terminal emulator that forwards bytes.             │
 │                                                                         │
 │ The UART device on the board doesn't know or care which setup is        │
-│ used — it just sees bytes arriving in its RX FIFO and bytes leaving     │
+│ used - it just sees bytes arriving in its RX FIFO and bytes leaving     │
 │ its TX FIFO. Layer 2 sits at the cable boundary regardless.             │
 │                                                                         │
 │ Which mapping applies depends on the demo:                              │
-│   demo_12c/13 (interactive) → Mapping 1 (direct keyboard/display)       │
-│   CERBERUS run_shell.py     → Mapping 2 (PC terminal emulator)          │
-│   CERBERUS run.py           → Automated test equipment (neither)        │
+│   demo_12c/13 (interactive) -> Mapping 1 (direct keyboard/display)      │
+│   CERBERUS run_shell.py     -> Mapping 2 (PC terminal emulator)         │
+│   CERBERUS run.py           -> Automated test equipment (neither)       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ LAYER 1: Hardware Simulator (C++)                                       │
 │ ─────────────────────────────────────────────────────────────────────── │
@@ -180,29 +180,29 @@ In real world, according to the diagram below, after compiling through the code 
 │ Only difference: real silicon does it in 1ns with transistors,          │
 │ C++ does it in 1µs with software. Behavior is identical.                │
 │                                                                         │
-│   Real silicon component          →  C++ equivalent                     │
+│   Real silicon component          ->  C++ equivalent                    │
 │   ───────────────────────────────────────────────────────────────────── │
-│   32 flip-flop registers           →  uint32_t regs_[32]                │
-│   Program counter register         →  uint32_t pc_                      │
-│   ALU (adder, shifter, mux)        →  execute_alu() function            │
-│   Instruction decoder              →  decode(instr) function            │
-│   Pipeline registers               →  StageIFID, StageEX, StageMEMWB    │
-│   SRAM cells (1MB)                 →  vector<uint8_t> data_             │
-│   L1 cache (tag + data arrays)     →  Cache class (lines[], tags[])     │
-│   SDRAM row buffer                 →  SDRAMModel (current_row_)         │
-│   Timer countdown register         →  Timer class (counter_)            │
-│   UART TX/RX FIFOs                 →  queue<uint8_t> rx_fifo_           │
-│   I/O address decoder              →  IOBus (if addr>=0xF000, route)    │
-│   Power rail current               →  Leakage class (HW/HD model)       │
-│   Clock crystal oscillation        →  for loop in cpu.run(N)            │
+│   32 flip-flop registers           ->  uint32_t regs_[32]               │
+│   Program counter register         ->  uint32_t pc_                     │
+│   ALU (adder, shifter, mux)        ->  execute_alu() function           │
+│   Instruction decoder              ->  decode(instr) function           │
+│   Pipeline registers               ->  StageIFID, StageEX, StageMEMWB   │
+│   SRAM cells (1MB)                 ->  vector<uint8_t> data_            │
+│   L1 cache (tag + data arrays)     ->  Cache class (lines[], tags[])    │
+│   SDRAM row buffer                 ->  SDRAMModel (current_row_)        │
+│   Timer countdown register         ->  Timer class (counter_)           │
+│   UART TX/RX FIFOs                 ->  queue<uint8_t> rx_fifo_          │
+│   I/O address decoder              ->  IOBus (if addr>=0xF000, route)   │
+│   Power rail current               ->  Leakage class (HW/HD model)      │
+│   Clock crystal oscillation        ->  for loop in cpu.run(N)           │
 │                                                                         │
 │   ┌───────────────────────────────────────────────────────────────┐     │
 │   │ CPU Core (3-stage pipeline + forwarding)                      │     │
-│   │  IF/ID → EX → MEM/WB, CSRs, performance counters              │     │
+│   │  IF/ID -> EX -> MEM/WB, CSRs, performance counters            │     │
 │   └───────────────────────────────────────────────────────────────┘     │
 │   ┌───────────────────────────────────────────────────────────────┐     │
 │   │ Memory Hierarchy                                              │     │
-│   │  L1 I-Cache + D-Cache (2KB, DM, 32B) → On-chip RAM → SDRAM    │     │
+│   │  L1 I-Cache + D-Cache (2KB, DM, 32B) -> On-chip RAM -> SDRAM  │     │
 │   └───────────────────────────────────────────────────────────────┘     │
 │   ┌───────────────────────────────────────────────────────────────┐     │
 │   │ I/O Devices (memory-mapped)                                   │     │
@@ -237,9 +237,9 @@ Step-by-step what happens when you run `make cpa`:
 ┌─────────────────────────────────────────────────────────────────┐
 │ Step 1: Python (layer5_attacker/cpa.py) starts                  │
 │                                                                 │
-│   for i in range(500):  # collect 500 traces                   │
+│   for i in range(500):  # collect 500 traces                    │
 │       plaintext = random_16_bytes()                             │
-│       ↓                                                         │
+│       V                                                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -250,18 +250,18 @@ Step-by-step what happens when you run `make cpa`:
 │   data = generate_data(plaintext, key)  # sbox + expanded keys  │
 │                                                                 │
 │   code is a list of uint32 values like:                         │
-│   [0x00050513,  # addi a0, zero, 0  (a0 = state base)          │
+│   [0x00050513,  # addi a0, zero, 0  (a0 = state base)           │
 │    0x10000593,  # addi a1, zero, 256 (wrong, just example)      │
 │    ...]                                                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 3: Load into simulator (pybind11 → C++)                    │
+│ Step 3: Load into simulator (pybind11 -> C++)                   │
 │                                                                 │
 │   cpu = hades.CPU()                                             │
-│   cpu.load_data(data, 0x0000)     # sbox, keys → mem[0x0000]   │
-│   cpu.load_program(binary, 0x1000) # code → mem[0x1000]        │
+│   cpu.load_data(data, 0x0000)     # sbox, keys -> mem[0x0000]   │
+│   cpu.load_program(binary, 0x1000) # code -> mem[0x1000]        │
 │                                                                 │
 │   Memory now looks like:                                        │
 │   [0x0000] plaintext bytes (16)                                 │
@@ -275,7 +275,7 @@ Step-by-step what happens when you run `make cpa`:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 4: Execute (C++ cpu.cpp — THE HARDWARE SIMULATION)         │
+│ Step 4: Execute (C++ cpu.cpp - THE HARDWARE SIMULATION)         │
 │                                                                 │
 │   pc = 0x1000                                                   │
 │   while not halted:                                             │
@@ -284,8 +284,8 @@ Step-by-step what happens when you run `make cpa`:
 │       ... extract rd, rs1, rs2 ... #                            │
 │       result = alu_compute(...)    # EXECUTE                    │
 │       write_reg(rd, result)        # WRITEBACK + LEAK           │
-│           └→ leak_.record(result)  # power = HW(result) + noise │
-│              trace_.push_back(power)                             │
+│           └-> leak_.record(result)  # power = HW(result) + noise│
+│              trace_.push_back(power)                            │
 │       pc += 4                      # NEXT                       │
 │                                                                 │
 │   Example for SubBytes LBU instruction:                         │
@@ -293,8 +293,8 @@ Step-by-step what happens when you run `make cpa`:
 │       addr = regs[t1] + 0 = 0x0100 + state_byte_value           │
 │       value = mem.read_byte(addr)  = SBOX[state_byte]           │
 │       write_reg(t0, value)                                      │
-│           → leak_.record(value)                                 │
-│           → trace_.push_back(popcount(value) + noise)           │
+│           -> leak_.record(value)                                │
+│           -> trace_.push_back(popcount(value) + noise)          │
 │                                                                 │
 │   After ~5000 instructions: halted = true (ECALL)               │
 └─────────────────────────────────────────────────────────────────┘
@@ -305,7 +305,7 @@ Step-by-step what happens when you run `make cpa`:
 │                                                                 │
 │   trace = cpu.get_power_trace()  # ~3000 float values           │
 │   # Each value = HW of a register write + noise                 │
-│   # trace[50] might be HW(SBOX[plaintext[0] ^ key[0]])         │
+│   # trace[50] might be HW(SBOX[plaintext[0] ^ key[0]])          │
 │                                                                 │
 │   traces.append(trace)  # store for later analysis              │
 └─────────────────────────────────────────────────────────────────┘
@@ -320,13 +320,13 @@ Step-by-step what happens when you run `make cpa`:
 │                        for i in range(500)]                     │
 │           measured = [traces[i][sbox_index[byte]]               │
 │                       for i in range(500)]                      │
-│           correlation = numpy.corrcoef(predicted, measured)      │
+│           correlation = numpy.corrcoef(predicted, measured)     │
 │                                                                 │
-│       best_guess = argmax(|correlation|)                         │
+│       best_guess = argmax(|correlation|)                        │
 │       # For correct guess: correlation ≈ 0.9                    │
 │       # For wrong guesses: correlation ≈ 0.0                    │
 │                                                                 │
-│   Result: recovered_key = [0x2b, 0x7e, 0x15, ...] ✅            │
+│   Result: recovered_key = [0x2b, 0x7e, 0x15, ...]               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -342,7 +342,7 @@ Step-by-step what happens when you run `make cpa`:
 | Multi-core | Future | No cross-core attacks yet |
 | Bus arbitration | Not planned | Single-master system |
 
-The current simulator is a **single-cycle, single-core, no-cache CPU** — the simplest possible architecture that still produces meaningful side-channel leakage.
+The current simulator is a **single-cycle, single-core, no-cache CPU** - the simplest possible architecture that still produces meaningful side-channel leakage.
 
 ## Phase 1. Core Concepts of RISC-V and Minimal RISC-V Processor
 
@@ -354,12 +354,12 @@ RISC-V is an open-standard instruction set architecture. RV32I is the 32-bit int
 
 **Instruction decoding** extracts fields by bit position:
 ```
-bits [6:0]   → opcode (determines instruction type)
-bits [11:7]  → rd (destination register)
-bits [14:12] → funct3 (sub-operation selector)
-bits [19:15] → rs1 (source register 1)
-bits [24:20] → rs2 (source register 2)
-bits [31:25] → funct7 (further differentiation, e.g., ADD vs SUB)
+bits [6:0]   -> opcode (determines instruction type)
+bits [11:7]  -> rd (destination register)
+bits [14:12] -> funct3 (sub-operation selector)
+bits [19:15] -> rs1 (source register 1)
+bits [24:20] -> rs2 (source register 2)
+bits [31:25] -> funct7 (further differentiation, e.g., ADD vs SUB)
 ```
 
 ### 1.1 Memory (`src/hardware/memory.h`)
@@ -373,20 +373,20 @@ Header-only implementation of a flat 64KB memory space.
 - No alignment enforcement (simplifies implementation; real RISC-V may trap on misaligned access)
 
 **Key methods**:
-- `read_byte/half/word` — load from memory with appropriate width
-- `write_byte/half/word` — store to memory
-- `load(base, bytes)` — bulk load (used for program/data initialization)
-- `dump(addr, len)` — bulk read (used for observation)
+- `read_byte/half/word` - load from memory with appropriate width
+- `write_byte/half/word` - store to memory
+- `load(base, bytes)` - bulk load (used for program/data initialization)
+- `dump(addr, len)` - bulk read (used for observation)
 
 ### 1.2 CPU (`src/hardware/cpu.h`, `src/hardware/cpu.cpp`)
 
 The core simulator implementing single-cycle RV32I execution.
 
 **State**:
-- `regs_[32]` — register file (x0 enforced to 0 after every instruction)
-- `pc_` — program counter (initialized to 0x1000)
-- `cycles_` — instruction count (1 cycle per instruction in single-cycle mode)
-- `halted_` — stop flag (set by ECALL)
+- `regs_[32]` - register file (x0 enforced to 0 after every instruction)
+- `pc_` - program counter (initialized to 0x1000)
+- `cycles_` - instruction count (1 cycle per instruction in single-cycle mode)
+- `halted_` - stop flag (set by ECALL)
 
 **Execution loop** (`run()`):
 ```
@@ -412,12 +412,12 @@ Each format has a different immediate encoding with sign extension:
 - `imm_u`: bits [31:12] << 12 (no sign extension needed, already 32-bit)
 - `imm_j`: bits [31|19:12|20|30:21] << 1, sign-extended from bit 20
 
-**Critical design choice — `write_reg()`**:
+**Critical design choice - `write_reg()`**:
 ```cpp
 void CPU::write_reg(uint32_t rd, uint32_t value) {
     if (rd == 0) return;  // x0 is always 0
     regs_[rd] = value;
-    leak_.record(value);  // ← LEAKAGE POINT
+    leak_.record(value);  // <- LEAKAGE POINT
 }
 ```
 Every register write emits a leakage sample. This is the hook that enables all side-channel attacks.
@@ -427,25 +427,25 @@ Every register write emits a leakage sample. This is the hook that enables all s
 Exposes the C++ engine as a Python module named `hades`.
 
 **Exposed interface**:
-- `hades.CPU()` — constructor
-- `cpu.load_program(bytes, base_addr)` — load code
-- `cpu.load_data(bytes, base_addr)` — load data
-- `cpu.run(max_instructions)` — execute
-- `cpu.reset()` — clear state
-- `cpu.get_power_trace()` → `list[float]`
-- `cpu.get_cycles()` → `int`
-- `cpu.get_pc()` → `int`
-- `cpu.get_reg(idx)` → `int`
-- `cpu.read_mem(addr, len)` → `list[int]`
-- `cpu.set_leakage_model(model)` — HW or HD
-- `cpu.set_noise(stddev)` — noise level
-- `cpu.set_seed(seed)` — RNG seed
+- `hades.CPU()` - constructor
+- `cpu.load_program(bytes, base_addr)` - load code
+- `cpu.load_data(bytes, base_addr)` - load data
+- `cpu.run(max_instructions)` - execute
+- `cpu.reset()` - clear state
+- `cpu.get_power_trace()` -> `list[float]`
+- `cpu.get_cycles()` -> `int`
+- `cpu.get_pc()` -> `int`
+- `cpu.get_reg(idx)` -> `int`
+- `cpu.read_mem(addr, len)` -> `list[int]`
+- `cpu.set_leakage_model(model)` - HW or HD
+- `cpu.set_noise(stddev)` - noise level
+- `cpu.set_seed(seed)` - RNG seed
 
 **pybind11 features used**:
-- `py::class_<CPU>` — wrap C++ class
-- `py::enum_<LeakageModel>` — wrap enum
-- `pybind11/stl.h` — automatic `std::vector` ↔ Python list conversion
-- `py::arg()` — named arguments with defaults
+- `py::class_<CPU>` - wrap C++ class
+- `py::enum_<LeakageModel>` - wrap enum
+- `pybind11/stl.h` - automatic `std::vector` ↔ Python list conversion
+- `py::arg()` - named arguments with defaults
 
 ### 1.4 Build System (`Makefile`)
 
@@ -454,16 +454,16 @@ Two build targets:
    - Uses `python3 -m pybind11 --includes` for header paths
    - Uses `python3-config --extension-suffix` for correct output filename
 2. **asm**: Assembles `.S` files to `.bin` via RISC-V cross-compiler
-   - `.S` → `.elf` (gcc with linker script)
-   - `.elf` → `.bin` (objcopy, raw binary)
+   - `.S` -> `.elf` (gcc with linker script)
+   - `.elf` -> `.bin` (objcopy, raw binary)
 
 ### 1.5 Linker Script (`src/programs/link.ld`)
 
 Defines memory layout for assembled programs:
 ```
-CODE:  0x1000 (12KB) — program instructions
-DATA:  0x0000 (4KB)  — plaintext, keys, S-box, results
-STACK: 0x4000 (4KB)  — stack space
+CODE:  0x1000 (12KB) - program instructions
+DATA:  0x0000 (4KB)  - plaintext, keys, S-box, results
+STACK: 0x4000 (4KB)  - stack space
 ```
 
 This matches the CPU's initial PC (0x1000) and the memory map defined in study.md.
@@ -497,13 +497,13 @@ address (like 0x10000), and the simulator would execute garbage at 0x1000.
 ```
 Python script
     │
-    ├─ load_program(binary)  → copies bytes into mem_[0x1000..]
-    ├─ load_data(data)       → copies bytes into mem_[0x0000..]
-    ├─ run()                 → executes instructions, fills leak_.trace_
+    ├─ load_program(binary)  -> copies bytes into mem_[0x1000..]
+    ├─ load_data(data)       -> copies bytes into mem_[0x0000..]
+    ├─ run()                 -> executes instructions, fills leak_.trace_
     │
-    ├─ get_power_trace()     → returns leak_.trace_ as Python list
-    ├─ get_reg(i)            → returns regs_[i]
-    └─ read_mem(addr, len)   → returns mem_.dump(addr, len)
+    ├─ get_power_trace()     -> returns leak_.trace_ as Python list
+    ├─ get_reg(i)            -> returns regs_[i]
+    └─ read_mem(addr, len)   -> returns mem_.dump(addr, len)
 ```
 
 ## Phase 2: 3-Stage Pipeline
@@ -514,7 +514,7 @@ The DTEK-V uses a 3-stage pipeline (simpler than textbook 5-stage):
 
 ```
 ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  IF/ID   │───▶│    EX    │───▶│  MEM/WB  │
+│  IF/ID   │───▶│    EX    │──▶│  MEM/WB  │
 │          │    │          │    │          │
 │ Fetch +  │    │ ALU      │    │ Memory   │
 │ Decode   │    │ Branch   │    │ Writeback│
@@ -528,7 +528,7 @@ Each stage is represented by a struct holding the instruction, PC, and computed 
 
 ### 2.2 Forwarding
 
-Data forwarding eliminates stalls for ALU→ALU dependencies:
+Data forwarding eliminates stalls for ALU->ALU dependencies:
 
 ```cpp
 uint32_t CPU::forward_reg(uint32_t reg_idx) const {
@@ -556,7 +556,7 @@ bool CPU::detect_load_use_hazard() const {
 }
 ```
 
-When detected: insert 1-cycle bubble (stall IF/ID, let EX→MEM/WB proceed).
+When detected: insert 1-cycle bubble (stall IF/ID, let EX->MEM/WB proceed).
 
 ### 2.4 Branch Handling
 
@@ -585,8 +585,8 @@ Accessible via CSR instructions (CSRRW/CSRRS/CSRRC) or Python API.
 #### The Problem
 
 Two CPU implementations exist:
-- `CPU` — single-cycle, simple, working (Phase 1)
-- `PipelinedCPU` — 3-stage pipeline with hazards, forwarding, perf counters
+- `CPU` - single-cycle, simple, working (Phase 1)
+- `PipelinedCPU` - 3-stage pipeline with hazards, forwarding, perf counters
 
 They share a common API surface (`load_program`, `run`, `get_cycles`, `get_reg`, etc.) but differ in behavior and extra capabilities. The natural OOP instinct (especially from Java) is to create an interface:
 
@@ -607,7 +607,7 @@ class PipelinedCPU : public CPUI { ... };
 `PipelinedCPU` exposes pipeline-specific data (`get_instret()`, `get_perf()`, `stalls_data`, `stalls_branch`) that has no meaning on the single-cycle CPU. Code using the pipelined version will always need to know it's pipelined:
 
 ```python
-# This defeats polymorphism — you need to know the concrete type
+# This defeats polymorphism - you need to know the concrete type
 if isinstance(cpu, hades.PipelinedCPU):
     print(cpu.get_perf())
 ```
@@ -630,7 +630,7 @@ There is no `std::vector<CPUI*>` holding a mix of CPUs. There is no factory retu
 
 **4. Performance: not about 1-2ns per call.**
 
-The vtable cost per call is trivial. The real issue is that `virtual` prevents inlining. In the hot loop (`run()` calling `execute()`, `forward_reg()`, `write_reg()`), inlining is critical — the compiler can eliminate redundant loads, fold constants, and vectorize. Virtual blocks all of this.
+The vtable cost per call is trivial. The real issue is that `virtual` prevents inlining. In the hot loop (`run()` calling `execute()`, `forward_reg()`, `write_reg()`), inlining is critical - the compiler can eliminate redundant loads, fold constants, and vectorize. Virtual blocks all of this.
 
 #### Where Polymorphism IS Appropriate in C++
 
@@ -695,7 +695,7 @@ class CPULike(Protocol):
     def get_reg(self, idx: int) -> int: ...
 ```
 
-Both `hades.CPU` and `hades.PipelinedCPU` satisfy this protocol automatically — no C++ changes needed.
+Both `hades.CPU` and `hades.PipelinedCPU` satisfy this protocol automatically - no C++ changes needed.
 
 #### Enforcing Binding Consistency (Macro)
 
@@ -766,7 +766,7 @@ An earlier attempt merged both processors into one class with `set_pipeline_enab
 - Adding a new processor type = adding a new file, no existing code touched
 - `static_assert(CPULike<NewCPU>)` ensures API consistency at compile time
 
-**Design rule**: if two things have different internal behavior and different state, they should be different classes — even if their external API overlaps. Share code via composition (Memory, Leakage) and free functions (decode, execute_alu), not inheritance or flags.
+**Design rule**: if two things have different internal behavior and different state, they should be different classes - even if their external API overlaps. Share code via composition (Memory, Leakage) and free functions (decode, execute_alu), not inheritance or flags.
 
 ## Phase 3: Cache
 
@@ -842,7 +842,7 @@ Extracted shared state and accessor implementations into `CPUBase<Derived>`:
 - `set_cache_enabled()`, `set_miss_penalty()`, `get_icache_misses()`, `get_dcache_misses()`
 - `write_reg()` (protected)
 
-Zero vtable overhead — each instantiation (`CPUBase<CPU>`, `CPUBase<PipelinedCPU>`) is a fully independent class resolved at compile time.
+Zero vtable overhead - each instantiation (`CPUBase<CPU>`, `CPUBase<PipelinedCPU>`) is a fully independent class resolved at compile time.
 
 ### 3.6 Shared ISA Decode (`rv32_decode.h`)
 
@@ -851,7 +851,7 @@ Extracted the parts genuinely common to both execution models:
 - `RV32_Opcode` enum (was duplicated in both .cpp files)
 - `Decoded` struct + `decode_instr()` inline function
 
-**Not included here:** `ExecResult` and `execute_alu()` — these produce pipeline-stage metadata (`is_branch`, `branch_taken`, `branch_target`, `store_value`) that only the pipelined model needs. The single-cycle CPU executes directly via a switch on decoded fields.
+**Not included here:** `ExecResult` and `execute_alu()` - these produce pipeline-stage metadata (`is_branch`, `branch_taken`, `branch_target`, `store_value`) that only the pipelined model needs. The single-cycle CPU executes directly via a switch on decoded fields.
 
 ### 3.7 Cache Integration
 
@@ -866,11 +866,11 @@ Caches moved to `CPUBase` so both processors can use them uniformly. Each CPU's 
 | `CPU` | `PipelinedCPU` |
 |-------|----------------|
 | `cycles_` counter | `PerfCounters perf_` (mcycle, minstret, stalls_data, stalls_branch) |
-| Single `execute()` switch | Pipeline stages (IF/ID → EX → MEM/WB) |
+| Single `execute()` switch | Pipeline stages (IF/ID -> EX -> MEM/WB) |
 | Direct register reads | Forwarding logic (`forward_reg()`) |
-| — | Hazard detection (`detect_load_use_hazard()`) |
-| — | `ExecResult` / `execute_alu()` (structured output for pipeline) |
-| — | CSR registers |
+| - | Hazard detection (`detect_load_use_hazard()`) |
+| - | `ExecResult` / `execute_alu()` (structured output for pipeline) |
+| - | CSR registers |
 
 ---
 
@@ -887,7 +887,7 @@ if (cache_enabled_ && !dcache_.access(addr))
 uint32_t val = mem_.read_word(addr);
 ```
 
-Each CPU had to manually orchestrate cache → hierarchy → raw access. Adding a new memory feature required editing every CPU.
+Each CPU had to manually orchestrate cache -> hierarchy -> raw access. Adding a new memory feature required editing every CPU.
 
 #### Solution: Composite Memory Object (Implemented)
 
@@ -904,8 +904,8 @@ Memory                              (single composite, owned by CPUBase)
 
 **Classes**:
 
-- `MemoryPort` — one access path with its own L1 cache. Handles cache lookup, latency accumulation, and penalty draining. References the shared `MemHierarchy`.
-- `Memory` — composite owning `MemHierarchy` + two `MemoryPort` instances. Provides global config methods and direct load/dump (bypassing cache).
+- `MemoryPort` - one access path with its own L1 cache. Handles cache lookup, latency accumulation, and penalty draining. References the shared `MemHierarchy`.
+- `Memory` - composite owning `MemHierarchy` + two `MemoryPort` instances. Provides global config methods and direct load/dump (bypassing cache).
 
 **CPU usage (chaining)**:
 
@@ -921,7 +921,7 @@ perf_.mcycle += mem_.icache().drain_penalty();
 uint32_t val = mem_.dcache().read_word(addr);
 perf_.mcycle += mem_.dcache().drain_penalty();
 
-// Data store (drain but don't stall — write buffer model):
+// Data store (drain but don't stall - write buffer model):
 mem_.dcache().write_word(addr, val);
 mem_.dcache().drain_penalty();
 
@@ -944,7 +944,7 @@ protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
     bool halted_ = false;
-    Memory mem_;                  // ← single member for all memory
+    Memory mem_;                  // <- single member for all memory
     void write_reg(uint32_t rd, uint32_t value);
 public:
     // All config/stats delegate to mem_:
@@ -963,7 +963,7 @@ public:
 | Property | Result |
 |----------|--------|
 | Single ownership | One `mem_` object, one `reset()`, one lifetime |
-| CPU code simplicity | No cache/hierarchy logic in CPU — just read/write + drain |
+| CPU code simplicity | No cache/hierarchy logic in CPU - just read/write + drain |
 | Extensibility | Add L2, write buffer, bus contention inside `Memory` without touching CPUBase |
 | Chaining clarity | `mem_.dcache().read_word(addr)` makes access path explicit |
 | No constructor wiring | `Memory` internally constructs ports with hierarchy reference |
@@ -984,7 +984,7 @@ public:
 
 ### 4.1 Overview
 
-Phase 4 replaces the flat `Memory` class with `MemHierarchy` — a unified memory controller that models realistic latency differences between on-chip RAM and off-chip SDRAM. The hierarchy is **disabled by default** for backward compatibility; when disabled, all accesses behave identically to the old flat 64KB memory.
+Phase 4 replaces the flat `Memory` class with `MemHierarchy` - a unified memory controller that models realistic latency differences between on-chip RAM and off-chip SDRAM. The hierarchy is **disabled by default** for backward compatibility; when disabled, all accesses behave identically to the old flat 64KB memory.
 
 ### 4.2 File Structure
 
@@ -1008,33 +1008,33 @@ CPUBase<PipelinedCPU>
        │
        └─ SDRAMModel sdram_
             ├─ current_row_: uint32_t   (tracks open row)
-            ├─ row_bits_: uint32_t      (default: 10 → 1KB rows)
+            ├─ row_bits_: uint32_t      (default: 10 -> 1KB rows)
             ├─ row_hit_latency_: uint32_t  (default: 5 cycles)
             ├─ row_miss_latency_: uint32_t (default: 25 cycles)
             ├─ refresh_interval_: uint32_t (default: every 10000 accesses)
             └─ refresh_latency_: uint32_t  (default: 50 cycles)
 ```
 
-Key design decision: `MemHierarchy` keeps the **same flat 64KB data store** regardless of hierarchy mode. The hierarchy only affects **latency computation**, not actual data routing. This means addresses always wrap with `& 0xFFFF` — the simulator does not model a larger address space.
+Key design decision: `MemHierarchy` keeps the **same flat 64KB data store** regardless of hierarchy mode. The hierarchy only affects **latency computation**, not actual data routing. This means addresses always wrap with `& 0xFFFF` - the simulator does not model a larger address space.
 
 ### 4.4 Address Routing and Latency Model
 
 ```
 MemHierarchy::compute_latency(addr)
     │
-    ├─ hierarchy disabled? → return 0 (no extra cycles)
+    ├─ hierarchy disabled? -> return 0 (no extra cycles)
     │
-    ├─ addr < 0x10000? → return onchip_latency_ (1 cycle)
+    ├─ addr < 0x10000? -> return onchip_latency_ (1 cycle)
     │
-    └─ addr >= 0x10000? → SDRAMModel::access_latency(addr)
+    └─ addr >= 0x10000? -> SDRAMModel::access_latency(addr)
                             │
-                            ├─ same row as last access? → row_hit_latency_ (5 cycles)
-                            ├─ different row?           → row_miss_latency_ (25 cycles)
+                            ├─ same row as last access? -> row_hit_latency_ (5 cycles)
+                            ├─ different row?           -> row_miss_latency_ (25 cycles)
                             │
                             └─ + refresh_latency_ (50 cycles) if access_count % 10000 == 0
 ```
 
-**Important**: Since all data wraps to 64KB, addresses >= 0x10000 still read/write from the same array. The SDRAM path is a latency model only — there is no distinct data for addresses >= 0x10000. In practice, the program counter lives at 0x1000 (on-chip range) and data loads can target any address.
+**Important**: Since all data wraps to 64KB, addresses >= 0x10000 still read/write from the same array. The SDRAM path is a latency model only - there is no distinct data for addresses >= 0x10000. In practice, the program counter lives at 0x1000 (on-chip range) and data loads can target any address.
 
 ### 4.5 Pipeline Integration
 
@@ -1074,7 +1074,7 @@ if (mem_.is_enabled()) {
 }
 ```
 
-Stores update the SDRAM row buffer state (so subsequent reads from the same row get hits) but do NOT add stall cycles — this models a write buffer.
+Stores update the SDRAM row buffer state (so subsequent reads from the same row get hits) but do NOT add stall cycles - this models a write buffer.
 
 ### 4.6 Cycle Accounting Example
 
@@ -1082,10 +1082,10 @@ Given 4 load instructions + ECALL (5 instructions total), all addresses < 0x1000
 
 | Source | Count | Latency each | Total |
 |--------|-------|-------------|-------|
-| Base pipeline execution | — | — | 8 cycles |
+| Base pipeline execution | - | - | 8 cycles |
 | Instruction fetches (hierarchy) | 5 | 1 cycle | +5 cycles |
 | Data loads (hierarchy) | 4 | 1 cycle | +4 cycles |
-| ECALL fetch (already counted above) | — | — | +1 cycle |
+| ECALL fetch (already counted above) | - | - | +1 cycle |
 | **Total** | | | **18 cycles** |
 
 With SDRAM-range accesses to different rows: each load pays 25 cycles instead of 1, creating dramatic timing differences.
@@ -1106,7 +1106,7 @@ uint32_t SDRAMModel::access_latency(uint32_t addr) {
     }
 
     // Row buffer check
-    uint32_t row = addr >> row_bits_;  // row = addr >> 10 → 1KB rows
+    uint32_t row = addr >> row_bits_;  // row = addr >> 10 -> 1KB rows
     if (row == current_row_) {
         row_hits_++;
         return row_hit_latency_ + refresh_penalty;   // 5 + 0|50
@@ -1119,8 +1119,8 @@ uint32_t SDRAMModel::access_latency(uint32_t addr) {
 ```
 
 Default row size = `1 << row_bits_` = 1024 bytes. Two addresses are in the same row if `addr >> 10` is equal. This means:
-- 0x100, 0x101, 0x1FF → same row (row 0)
-- 0x100, 0x500 → different rows (row 0 vs row 1)
+- 0x100, 0x101, 0x1FF -> same row (row 0)
+- 0x100, 0x500 -> different rows (row 0 vs row 1)
 
 ### 4.8 Interaction with Cache (Phase 3 + Phase 4)
 
@@ -1150,7 +1150,7 @@ The SDRAM row buffer creates a **memory access pattern side-channel** independen
 3. **Combined with cache**: Even with L1 cache, cold misses during cryptographic operations hit the SDRAM model and leak the order/pattern of memory accesses through row hit/miss ratios.
 
 This is exploitable for:
-- Distinguishing AES key values (different keys → different S-box access patterns → different row hit rates)
+- Distinguishing AES key values (different keys -> different S-box access patterns -> different row hit rates)
 - Detecting which code path was taken (branch leads to different data access sequence)
 
 ### 4.10 Python API
@@ -1166,7 +1166,7 @@ cpu.get_sdram_row_misses()  # Number of accesses that required row activation
 
 ### 4.11 Design Limitation
 
-The current implementation does **not** model a separate large SDRAM address space. All addresses wrap to 64KB via `& (ONCHIP_SIZE - 1)`. The SDRAM path is a latency model only — there is no distinct data for addresses >= 0x10000. A future phase could extend `MemHierarchy` to support a larger backing store for realistic memory-mapped I/O or multi-level address spaces.
+The current implementation does **not** model a separate large SDRAM address space. All addresses wrap to 64KB via `& (ONCHIP_SIZE - 1)`. The SDRAM path is a latency model only - there is no distinct data for addresses >= 0x10000. A future phase could extend `MemHierarchy` to support a larger backing store for realistic memory-mapped I/O or multi-level address spaces.
 
 ## Architecture Decision: Python Driver vs C++ Native Driver
 
@@ -1179,7 +1179,7 @@ This follows the same model as numpy/scipy/astropy: performance-critical inner l
 ### The Core Tradeoff
 
 ```
-Edit → Result latency   vs   Run-time performance
+Edit -> Result latency   vs   Run-time performance
 ```
 
 When exploring side-channel behavior, the workflow is:
@@ -1188,15 +1188,15 @@ When exploring side-channel behavior, the workflow is:
 3. Observe timing difference
 4. Repeat
 
-With Python: edit → run (instant). With C++: edit → compile → link → run (2-5s each iteration).
+With Python: edit -> run (instant). With C++: edit -> compile -> link -> run (2-5s each iteration).
 
-The run-time performance argument is irrelevant because **Python never touches the hot loop**. When `cpu.run()` is called, execution is in compiled C++ until it returns. Python overhead is microseconds around seconds of simulation — negligible.
+The run-time performance argument is irrelevant because **Python never touches the hot loop**. When `cpu.run()` is called, execution is in compiled C++ until it returns. Python overhead is microseconds around seconds of simulation - negligible.
 
 ### Comparison
 
 | Aspect | Python Driver | C++ Native Driver |
 |--------|--------------|-------------------|
-| Edit → result | Instant (no compile) | 2-5s recompile |
+| Edit -> result | Instant (no compile) | 2-5s recompile |
 | Experiment scripting | 3-5 lines | 10-15 lines + recompile |
 | Simulation speed | C++ (same) | C++ (same) |
 | Dependencies | Python 3, pybind11 | None |
@@ -1217,13 +1217,13 @@ The run-time performance argument is irrelevant because **Python never touches t
 
 ```
 src/
-  hardware/        ← shared C++ engine (CPU, Memory, Pipeline)
-  bridge/          ← pybind11 bindings (Python driver path)
-  cli/             ← C++ main + encoder (native driver path, future)
+  hardware/        <- shared C++ engine (CPU, Memory, Pipeline)
+  bridge/          <- pybind11 bindings (Python driver path)
+  cli/             <- C++ main + encoder (native driver path, future)
     main.cpp
-    encoder.h      ← instruction encoding (equivalent of riscvtools)
-  demos/           ← Python demo scripts
-  software/        ← Python tests
+    encoder.h      <- instruction encoding (equivalent of riscvtools)
+  demos/           <- Python demo scripts
+  software/        <- Python tests
 ```
 
 The Makefile supports both:
@@ -1269,25 +1269,25 @@ Use cases for the native path:
 
 ### Decision
 
-**Python remains the primary driver** for interactive development, demos, and tests. A C++ native driver is planned for embedding/CI scenarios but is not blocking — the engine is already cleanly separated and can be linked from either path without modification.
+**Python remains the primary driver** for interactive development, demos, and tests. A C++ native driver is planned for embedding/CI scenarios but is not blocking - the engine is already cleanly separated and can be linked from either path without modification.
 
 
 ## Phase 5: I/O Devices (Timer + UART + GPIO)
 
 ### 5.1 I/O Bus Architecture (`layer1_hardware/include/io_bus.h`)
 
-Memory-mapped I/O uses the same load/store instructions as RAM access. The CPU doesn't know it's talking to a device — the I/O bus intercepts addresses >= 0xF000:
+Memory-mapped I/O uses the same load/store instructions as RAM access. The CPU doesn't know it's talking to a device - the I/O bus intercepts addresses >= 0xF000:
 
 ```
 CPU executes: SW t0, 0(t3)    where t3 = 0xF020
     │
-    ├─ addr < 0xF000? → normal memory (RAM/cache)
+    ├─ addr < 0xF000? -> normal memory (RAM/cache)
     │
-    └─ addr >= 0xF000? → I/O Bus dispatches to device
+    └─ addr >= 0xF000? -> I/O Bus dispatches to device
                               │
-                              ├─ 0xF000-0xF01F → Timer
-                              ├─ 0xF020-0xF03F → UART
-                              └─ 0xF040-0xF05F → GPIO
+                              ├─ 0xF000-0xF01F -> Timer
+                              ├─ 0xF020-0xF03F -> UART
+                              └─ 0xF040-0xF05F -> GPIO
 ```
 
 The `IODevice` base class defines the interface all devices must implement:
@@ -1345,10 +1345,10 @@ Python (host)                          CPU (simulated)
      │  cpu.uart_send([0x48, 0x69])         │
      │  ─────────────────────────────►      │
      │         (bytes go into RX FIFO)      │
-     │                                      │  LW t0, 0(uart_addr)  → pops 0x48
-     │                                      │  LW t1, 0(uart_addr)  → pops 0x69
+     │                                      │  LW t0, 0(uart_addr)  -> pops 0x48
+     │                                      │  LW t1, 0(uart_addr)  -> pops 0x69
      │                                      │
-     │                                      │  SW t0, 0(uart_addr)  → pushes 0x48 to TX
+     │                                      │  SW t0, 0(uart_addr)  -> pushes 0x48 to TX
      │  output = cpu.uart_recv()            │
      │  ◄─────────────────────────────      │
      │         (reads TX output buffer)     │
@@ -1379,7 +1379,7 @@ void GPIO::tick() {
 **Security relevance:**
 - GPIO toggle used as oscilloscope trigger (marks crypto start/end in trace)
 - Edge capture reveals timing of external events
-- In real attacks: attacker toggles GPIO pin → CPU starts AES → attacker captures power trace synchronized to the trigger
+- In real attacks: attacker toggles GPIO pin -> CPU starts AES -> attacker captures power trace synchronized to the trigger
 
 ### 5.5 CPU Integration
 
@@ -1392,7 +1392,7 @@ if (io_enabled_ && io_bus_.is_io_address(addr)) {
     result = io_bus_.read(addr);   // for loads
     io_bus_.write(addr, value);    // for stores
 } else {
-    // Normal memory path (cache → memory hierarchy)
+    // Normal memory path (cache -> memory hierarchy)
 }
 ```
 
@@ -1413,8 +1413,8 @@ Demonstrates all three devices in one script:
 
 | Part | Device | What happens | Verification |
 |------|--------|-------------|-------------|
-| 1 | UART | Python sends 'H','i' → CPU reads and echoes → Python receives [72,105] | Bidirectional FIFO works |
-| 2 | GPIO | Python sets input=0xAA → CPU XORs with 0xFF → output=0x55 | Read/write routing correct |
+| 1 | UART | Python sends 'H','i' -> CPU reads and echoes -> Python receives [72,105] | Bidirectional FIFO works |
+| 2 | GPIO | Python sets input=0xAA -> CPU XORs with 0xFF -> output=0x55 | Read/write routing correct |
 | 3 | Timer | Set period=100, start, do work, read snapshot | Countdown decrements |
 
 Run: `make demo-07`
@@ -1424,7 +1424,7 @@ Run: `make demo-07`
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ demos/                                                                  │
-│  demo_01 → demo_07                                                      │
+│  demo_01 -> demo_07                                                     │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ import hades
 ┌────────────────────────────────────▼────────────────────────────────────┐
@@ -1432,7 +1432,7 @@ Run: `make demo-07`
 │                                                                         │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │ CPU Core (3-stage pipeline)                                      │   │
-│  │   IF/ID → EX → MEM/WB                                            │   │
+│  │   IF/ID -> EX -> MEM/WB                                          │   │
 │  │   forwarding, hazard detection                                   │   │
 │  └──────────────────────────┬───────────────────────────────────────┘   │
 │                             │ memory access                             │
@@ -1460,10 +1460,10 @@ Run: `make demo-07`
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  Python API:                                                            │
-│    cpu.uart_send(bytes)     → push to RX FIFO                           │
-│    cpu.uart_recv()          → read TX output                            │
-│    cpu.gpio_set_input(val)  → set input pins                            │
-│    cpu.gpio_get_output()    → read output pins                          │
+│    cpu.uart_send(bytes)     -> push to RX FIFO                          │
+│    cpu.uart_recv()          -> read TX output                           │
+│    cpu.gpio_set_input(val)  -> set input pins                           │
+│    cpu.gpio_get_output()    -> read output pins                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1489,10 +1489,10 @@ void Mutex::write(uint32_t offset, uint32_t value) {
     if (new_value) {
         // Lock attempt
         if (!locked_) {
-            locked_ = true;          // free → acquired
+            locked_ = true;          // free -> acquired
             owner_ = new_owner;
         } else if (owner_ != new_owner) {
-            contention_count_++;     // another core holds it → FAIL
+            contention_count_++;     // another core holds it -> FAIL
         }
     } else {
         // Unlock attempt (only owner can unlock)
@@ -1504,7 +1504,7 @@ void Mutex::write(uint32_t offset, uint32_t value) {
 }
 ```
 
-Key property: the write is **atomic** — only one core can succeed per cycle. The other gets a contention (write has no effect).
+Key property: the write is **atomic** - only one core can succeed per cycle. The other gets a contention (write has no effect).
 
 ### 6.2 Multi-Core Controller (`layer1_hardware/include/multicore.h`)
 
@@ -1581,7 +1581,7 @@ sw   t0, 0(mutex_addr)
 # Core 1 (owner=2): try lock
 li   t0, 5          # (owner=2)<<1 | (value=1) = 5
 sw   t0, 0(mutex_addr)
-lw   t1, 0(mutex_addr)  # read back: if owner=2 → success
+lw   t1, 0(mutex_addr)  # read back: if owner=2 -> success
 ```
 
 ### 6.4 Contention Side-Channel
@@ -1608,7 +1608,7 @@ Core 0 work = 15 NOPs -> global_cycles = 22
 Difference: 10 cycles = exactly 10 extra NOPs
 ```
 
-This proves: **lock hold time is directly measurable by the contending core**, creating a timing side-channel that requires NO power measurement — just cycle counting.
+This proves: **lock hold time is directly measurable by the contending core**, creating a timing side-channel that requires NO power measurement - just cycle counting.
 
 ### 6.5 Demo: `demo_06_multicore.py`
 
@@ -1639,7 +1639,7 @@ Run: `make demo-06`
 │                     C++ Engine (build/hades.*.so)                       │
 │                                                                         │
 │  Single-core path:                                                      │
-│    CPU → Pipeline -> Cache -> MemHierarchy -> I/O Bus                   │
+│    CPU -> Pipeline -> Cache -> MemHierarchy -> I/O Bus                  │
 │                                                                         │
 │  Multi-core path:                                                       │
 │    MultiCore -> Core0.step() + Core1.step() -> shared Memory + I/O      │
@@ -1691,7 +1691,7 @@ void VGA::write(uint32_t offset, uint32_t value) {
 }
 ```
 
-CPU writes characters one at a time. The cursor advances automatically, wrapping at end of line. This mimics how real terminal hardware works — the CPU just sends bytes, the display handles positioning.
+CPU writes characters one at a time. The cursor advances automatically, wrapping at end of line. This mimics how real terminal hardware works - the CPU just sends bytes, the display handles positioning.
 
 ### 7.4 Pixel Buffer Operation
 
@@ -1906,7 +1906,7 @@ Each iteration of the Python loop:
 # 1. Read keyboard input
 user_input = input("Your guess (1-9): ")
 
-# 2. Send to CPU via UART (simulates keyboard → serial port)
+# 2. Send to CPU via UART (simulates keyboard -> serial port)
 cpu.uart_send([ord(user_input)])
 
 # 3. Run CPU (processes guess, writes to VGA, spins waiting for next)
@@ -1947,7 +1947,7 @@ This is the culmination of all 8 phases: a fully functional embedded computer ru
 
 ### 8.9 Bug Fix: Demo 08c Unresponsive Processor
 
-**Commit:** `c903da2` — "HADES: Phase 8 - Fix demo8c unresponsible processor bug"  
+**Commit:** `c903da2` - "HADES: Phase 8 - Fix demo8c unresponsible processor bug"  
 **File changed:** `src/hardware/pipelined_cpu.cpp`
 
 ### Symptom
@@ -1969,7 +1969,7 @@ The CPU appeared completely frozen after the first guess, regardless of how long
 The `PipelinedCPU::run()` method used **absolute** comparisons against cumulative performance counters:
 
 ```cpp
-// BUGGY — absolute thresholds
+// BUGGY - absolute thresholds
 void PipelinedCPU::run(uint32_t max_instructions) {
     uint64_t max_cycles = (uint64_t)max_instructions * 4;
     while (perf_.mcycle < max_cycles) {          // absolute cycle limit
@@ -1980,26 +1980,26 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 }
 ```
 
-The counters `perf_.mcycle` and `perf_.minstret` are **cumulative** — they monotonically increase across all calls to `run()` and are never reset between calls.
+The counters `perf_.mcycle` and `perf_.minstret` are **cumulative** - they monotonically increase across all calls to `run()` and are never reset between calls.
 
 The interactive demo calls `run()` multiple times in sequence:
 
-1. `cpu.run(5000)` — display title. After this: `minstret ≈ 4500`.
-2. User types '3'. `cpu.run(10000)` — process first guess. After this: `minstret ≈ 11000`.
-3. User types '3' again. `cpu.run(10000)` — **immediately exits** because `minstret (11000) >= max_instructions (10000)` is already true on the very first iteration.
+1. `cpu.run(5000)` - display title. After this: `minstret ≈ 4500`.
+2. User types '3'. `cpu.run(10000)` - process first guess. After this: `minstret ≈ 11000`.
+3. User types '3' again. `cpu.run(10000)` - **immediately exits** because `minstret (11000) >= max_instructions (10000)` is already true on the very first iteration.
 
 The cycle check (`perf_.mcycle < 40000`) was also problematic but the instruction check triggered first due to the ratio of spinning instructions in the UART polling loop.
 
 ### Why Waiting Doesn't Help
 
-The CPU does **not** run in real-time. It only executes when Python explicitly calls `cpu.run(N)`. Between keypresses, the CPU is completely frozen. The real-world clock is irrelevant — only the cumulative instruction counter matters, and it was already past the threshold.
+The CPU does **not** run in real-time. It only executes when Python explicitly calls `cpu.run(N)`. Between keypresses, the CPU is completely frozen. The real-world clock is irrelevant - only the cumulative instruction counter matters, and it was already past the threshold.
 
 ### The Fix
 
-Changed to **relative** comparisons — snapshot the counters at the start of each `run()` call and measure progress from that baseline:
+Changed to **relative** comparisons - snapshot the counters at the start of each `run()` call and measure progress from that baseline:
 
 ```cpp
-// FIXED — relative thresholds
+// FIXED - relative thresholds
 void PipelinedCPU::run(uint32_t max_instructions) {
     uint64_t start_cycles = perf_.mcycle;
     uint64_t start_instret = perf_.minstret;
@@ -2021,7 +2021,7 @@ Now each `run(N)` call executes **up to N instructions from wherever the CPU cur
 
 ### Impact
 
-This bug affected **any** code pattern that calls `cpu.run()` multiple times on the same CPU instance — not just the interactive demo. The chunk-based execution used by CERBERUS (`cpu.run(500)` in a loop) also relies on correct relative behavior.
+This bug affected **any** code pattern that calls `cpu.run()` multiple times on the same CPU instance - not just the interactive demo. The chunk-based execution used by CERBERUS (`cpu.run(500)` in a loop) also relies on correct relative behavior.
 
 ### Verification
 
@@ -2044,13 +2044,13 @@ $ echo -e "3\n7\n5" | make demo-08c
 The current execution model is **synchronous and cooperative**: the CPU only runs when Python explicitly calls `cpu.run(N)`, executes exactly N instructions, then returns control. This creates a stop-and-go pattern:
 
 ```
-Python: get user input → cpu.uart_send() → cpu.run(10000) → cpu.vga_get_char_row() → ...
+Python: get user input -> cpu.uart_send() -> cpu.run(10000) -> cpu.vga_get_char_row() -> ...
 ```
 
 This has fundamental limitations:
 
 1. **The CPU cannot run independently.** It must be manually stepped by the host program. A real processor runs continuously until it halts or is interrupted.
-2. **Budget estimation.** The caller must guess how many cycles are "enough" to process input. Too few → incomplete processing. Too many → wasted time in a spin loop.
+2. **Budget estimation.** The caller must guess how many cycles are "enough" to process input. Too few -> incomplete processing. Too many -> wasted time in a spin loop.
 3. **No concurrent I/O.** The host cannot read UART output while the CPU is running. It must wait for `run()` to return, then check.
 4. **Interactive demos are fragile.** The demo-08c fix showed that repeated `run(N)` calls require careful budget management.
 
@@ -2069,11 +2069,11 @@ Move CPU execution to a **dedicated background thread**. The CPU runs continuous
    run(0) ──────────────►│  while (!halted && !stop):   │
                          │      pipeline_cycle()        │
                          │                              │
-   run(N) ──────────────►│  for i in 0..N:             │
+   run(N) ──────────────►│  for i in 0..N:              │
                          │      pipeline_cycle()        │
                          │  then: pause (idle)          │
                          │                              │
-   stop() ──────────────►│  sets stop flag → exits loop │
+   stop() ──────────────►│  sets stop flag -> exits loop│
                          │  thread idles (not killed)   │
                          └──────────────────────────────┘
 ```
@@ -2092,7 +2092,7 @@ The key insight: **`run(N)` with N>0 remains blocking and backward-compatible.**
 
 | Method | Purpose |
 |--------|---------|
-| `cpu.stop()` | Force the CPU to pause execution. Sets a stop flag that the execution loop checks every cycle. Does **not** reset state — PC, registers, memory all preserved. |
+| `cpu.stop()` | Force the CPU to pause execution. Sets a stop flag that the execution loop checks every cycle. Does **not** reset state - PC, registers, memory all preserved. |
 | `cpu.is_running()` | Returns `true` if the CPU thread is actively executing (not paused, not halted). |
 | `cpu.wait()` | Block until the CPU halts or pauses (useful after `run(0)` to wait for halt). |
 
@@ -2118,7 +2118,7 @@ time.sleep(5)               # wait for some reasonable time
 if cpu.is_running():        # still going?
     cpu.stop()              # force pause
     # CPU is now paused at whatever PC it reached
-    # State is preserved — can inspect registers, memory
+    # State is preserved - can inspect registers, memory
     # Can call run() again to resume
 ```
 
@@ -2140,12 +2140,12 @@ std::thread t(some_function, arg1, arg2);
 The thread starts immediately upon construction. The main thread continues executing the next line while `some_function` runs in parallel.
 
 **Critical rule:** Before a `std::thread` object is destroyed, you must call either:
-- `t.join()` — block until the thread finishes
-- `t.detach()` — let it run independently (rarely what you want)
+- `t.join()` - block until the thread finishes
+- `t.detach()` - let it run independently (rarely what you want)
 
 If you destroy a joinable thread without doing either, the program calls `std::terminate()` (crashes).
 
-#### std::mutex — Protecting Shared Data
+#### std::mutex - Protecting Shared Data
 
 When two threads access the same variable, you get **data races** (undefined behavior). A mutex (mutual exclusion) prevents this:
 
@@ -2161,7 +2161,7 @@ mtx.unlock();                   mtx.unlock();
 
 Only one thread can hold the lock at a time. The other thread **blocks** (sleeps) until the lock is released.
 
-**RAII wrappers** (preferred — exception-safe, can't forget to unlock):
+**RAII wrappers** (preferred - exception-safe, can't forget to unlock):
 
 ```cpp
 {
@@ -2170,9 +2170,9 @@ Only one thread can hold the lock at a time. The other thread **blocks** (sleeps
 }   // automatically unlocks when 'lk' goes out of scope
 ```
 
-`std::unique_lock` is like `lock_guard` but can be unlocked/relocked manually — required for condition variables.
+`std::unique_lock` is like `lock_guard` but can be unlocked/relocked manually - required for condition variables.
 
-#### std::condition_variable — Signaling Between Threads
+#### std::condition_variable - Signaling Between Threads
 
 A condition variable lets one thread **sleep** until another thread **wakes it up**. This is how the CPU thread sleeps between `run()` calls instead of busy-spinning.
 
@@ -2200,15 +2200,15 @@ bool ready = false;   // the "condition" being waited on
 ```
 
 **How `cv.wait(lk, predicate)` works internally:**
-1. Check predicate — if already true, don't sleep, just return
+1. Check predicate - if already true, don't sleep, just return
 2. If false: atomically **release the mutex** and put this thread to sleep
 3. When `notify_one()` is called: wake up, **re-acquire the mutex**, check predicate again
 4. If predicate is true: return (thread continues with lock held)
 5. If predicate is false (spurious wakeup): go back to sleep
 
-The predicate lambda (`[&]{ return ready; }`) prevents **spurious wakeups** — the OS can wake threads for no reason, so you must always re-check the condition.
+The predicate lambda (`[&]{ return ready; }`) prevents **spurious wakeups** - the OS can wake threads for no reason, so you must always re-check the condition.
 
-#### std::atomic — Lock-Free Shared Variables
+#### std::atomic - Lock-Free Shared Variables
 
 For simple flags/counters, `std::atomic` provides thread-safe access without a mutex:
 
@@ -2257,9 +2257,9 @@ Python calls cpu.run(10000)
 └───────────────────────────────────────┘    └───────────────────────────────────────┘
 ```
 
-For `run(0)` (free-running), step 5 is skipped — main thread returns immediately, and the CPU thread runs until `halted_` or `stop()`.
+For `run(0)` (free-running), step 5 is skipped - main thread returns immediately, and the CPU thread runs until `halted_` or `stop()`.
 
-#### Destructor — Clean Shutdown
+#### Destructor - Clean Shutdown
 
 When the Python object is garbage-collected, the C++ destructor must stop the thread:
 
@@ -2284,7 +2284,7 @@ Without this, destroying the object while the thread sleeps causes a crash (`std
 void PipelinedCPU::thread_main() {
     while (true) {
         wait_for_run_signal();
-        if (shutdown_) return;  // exit the thread function → thread dies
+        if (shutdown_) return;  // exit the thread function -> thread dies
         // ... normal execution ...
     }
 }
@@ -2366,7 +2366,7 @@ Destructor ensures clean shutdown:
 
 ```cpp
 void PipelinedCPU::run(uint32_t max_instructions) {
-    if (running_) return;  // already executing — ignore re-entrant call
+    if (running_) return;  // already executing - ignore re-entrant call
     if (!thread_started_) {
         exec_thread_ = std::thread(&PipelinedCPU::thread_main, this);
         thread_started_ = true;
@@ -2433,7 +2433,7 @@ class UART : public IODevice {
 };
 ```
 
-GPIO uses `std::atomic<uint32_t>` — no mutex needed.
+GPIO uses `std::atomic<uint32_t>` - no mutex needed.
 
 VGA uses a mutex on the character/framebuffer, or provides a snapshot method.
 
@@ -2484,8 +2484,8 @@ All existing demos and the CERBERUS `run.py` chunk-execution pattern continue to
 
 - **Mutex cost per cycle:** If UART/VGA are protected by mutex, every `pipeline_cycle()` that does a load/store to I/O space acquires a lock. For the hot polling loop in `guess_game.S` (reads UART every ~4 cycles), this adds overhead.
 - **Mitigation:** Use lock-free SPSC (single-producer single-consumer) queues for UART FIFOs. CPU is the only consumer of RX and only producer of TX. Host is the opposite. No mutex needed.
-- **VGA:** Reads are infrequent from Python side. A simple mutex is fine — only acquired when Python calls `vga_get_char_row()`.
-- **GPIO:** Atomic operations — zero overhead beyond the atomic load/store.
+- **VGA:** Reads are infrequent from Python side. A simple mutex is fine - only acquired when Python calls `vga_get_char_row()`.
+- **GPIO:** Atomic operations - zero overhead beyond the atomic load/store.
 
 ### 9.9 Summary
 
@@ -2496,7 +2496,7 @@ All existing demos and the CERBERUS `run.py` chunk-execution pattern continue to
 | Dead loop handling | Stuck forever in `run()` | `stop()` breaks out within 1 cycle |
 | I/O timing | Only during `run()` windows | Anytime (concurrent) |
 | Cycle budget guessing | Required | Optional (can use `run(0)`) |
-| API compatibility | — | 100% backward compatible |
+| API compatibility | - | 100% backward compatible |
 
 ---
 
@@ -2521,15 +2521,15 @@ CPUBase<T>
 ├── CPU state (regs_, pc_, mem_)
 ├── I/O devices (uart_, gpio_, vga_)
 │
-├── CPU (single-cycle)      ← inherits ALL threading, never uses it
-└── PipelinedCPU            ← uses threading, run() spawns thread
+├── CPU (single-cycle)      <- inherits ALL threading, never uses it
+└── PipelinedCPU            <- uses threading, run() spawns thread
 ```
 
 **Problems discovered:**
 - `CPU` carried dead threading weight (thread was never started, but destructor still checked)
 - `MultiCore` was a completely separate class duplicating everything
 - No way to test pipeline logic without spawning threads
-- Thread-safety was purely "by convention" — no structural enforcement
+- Thread-safety was purely "by convention" - no structural enforcement
 - The `thread_main()` infinite loop needed a `shutdown_` flag, and forgetting it caused hangs on object destruction
 
 #### Attempt 2: Executor<T> as Wrapper (External Executor)
@@ -2537,9 +2537,9 @@ CPUBase<T>
 Next, we extracted all threading into a generic `Executor<T>` template that *owned* the model:
 
 ```
-Executor<PipelinedCPU>  ← user-facing type
+Executor<PipelinedCPU>  <- user-facing type
     │
-    └── PipelinedCPU     ← hidden inside, pure computation
+    └── PipelinedCPU     <- hidden inside, pure computation
 ```
 
 Python bindings exposed `Executor<PipelinedCPU>` as `"PipelinedCPU"`.
@@ -2557,9 +2557,9 @@ Python bindings exposed `Executor<PipelinedCPU>` as `"PipelinedCPU"`.
 The solution: invert the ownership. The model class IS the API and owns the Executor privately:
 
 ```
-PipelinedCPU  ← user-facing type (forever)
+PipelinedCPU  <- user-facing type (forever)
     │
-    └── Executor exec_{...}  ← private member, never exposed
+    └── Executor exec_{...}  <- private member, never exposed
 ```
 
 **Why this works:**
@@ -2585,7 +2585,7 @@ This means:
 
 **Practical enforcement:**
 
-1. **The public type IS the API.** `PipelinedCPU`, `CPU`, `MultiCore` — these names are permanent. Internal helpers (`Executor`, `IOBus`, `StageIFID`) can be renamed, restructured, or removed freely.
+1. **The public type IS the API.** `PipelinedCPU`, `CPU`, `MultiCore` - these names are permanent. Internal helpers (`Executor`, `IOBus`, `StageIFID`) can be renamed, restructured, or removed freely.
 
 2. **`run(N)` contract:**
    - `run(N>0)` = synchronous, blocks until done (always, forever)
@@ -2598,9 +2598,9 @@ This means:
    - Want watchpoints? Add `set_breakpoint()`. Don't change `step()`.
 
 4. **Internal restructuring is free:**
-   - Replace `std::mutex` in UART with lock-free queue → zero API change
-   - Change pipeline from 3-stage to 5-stage → zero API change
-   - Replace Executor with a coroutine-based scheduler → zero API change
+   - Replace `std::mutex` in UART with lock-free queue -> zero API change
+   - Change pipeline from 3-stage to 5-stage -> zero API change
+   - Replace Executor with a coroutine-based scheduler -> zero API change
 
 **Why this matters for HADES:**
 The simulator is used from Python demos, C++ unit tests, and potentially future wrappers (e.g., a GUI, a fuzzer, a power analysis framework). If adding threading breaks C++ callers, or adding power tracing breaks Python demos, the project becomes unmaintainable. The "only grow" rule prevents this class of bug entirely.
@@ -2610,7 +2610,7 @@ The simulator is used from Python demos, C++ unit tests, and potentially future 
 The Executor is **owned by** the model class, not the other way around. Users never see it.
 
 ```
-What the user writes (C++ or Python) — NEVER CHANGES:
+What the user writes (C++ or Python) - NEVER CHANGES:
 
     PipelinedCPU cpu;
     cpu.load_program(binary);
@@ -2625,19 +2625,19 @@ Internal structure:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│               PipelinedCPU  (THE public API)                 │
-│                                                              │
-│  PUBLIC (stable contract, only grows):                        │
-│    run(N)  — N>0: sync, N==0: async (via Executor)           │
-│    stop()  — halt async execution                            │
-│    is_running() — query async state                          │
-│    load_program(), get_reg(), get_pc(), get_cycles()         │
-│    uart_send(), vga_get_char_row(), gpio_set_input() ...     │
-│                                                              │
-│  PRIVATE (free to refactor):                                 │
-│    Executor exec_{...};   ← internal, never exposed          │
-│    regs_[], pc_, pipeline stages, memory, I/O devices        │
-│    step() — called by Executor AND by sync run()             │
+│               PipelinedCPU  (THE public API)                │
+│                                                             │
+│  PUBLIC (stable contract, only grows):                      │
+│    run(N)  - N>0: sync, N==0: async (via Executor)          │
+│    stop()  - halt async execution                           │
+│    is_running() - query async state                         │
+│    load_program(), get_reg(), get_pc(), get_cycles()        │
+│    uart_send(), vga_get_char_row(), gpio_set_input() ...    │
+│                                                             │
+│  PRIVATE (free to refactor):                                │
+│    Executor exec_{...};   <- internal, never exposed        │
+│    regs_[], pc_, pipeline stages, memory, I/O devices       │
+│    step() - called by Executor AND by sync run()            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -2645,14 +2645,14 @@ Internal structure:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Python / pybind11 Bindings                            │
-│                                                                              │
-│   hades.CPU            →  py::class_<CPU>                                    │
-│   hades.PipelinedCPU   →  py::class_<PipelinedCPU>                           │
-│   hades.MultiCore      →  py::class_<MultiCore>                              │
-│                                                                              │
-│   (Executor is NEVER mentioned in bindings)                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
+│                         Python / pybind11 Bindings                          │
+│                                                                             │
+│   hades.CPU            ->  py::class_<CPU>                                  │
+│   hades.PipelinedCPU   ->  py::class_<PipelinedCPU>                         │
+│   hades.MultiCore      ->  py::class_<MultiCore>                            │
+│                                                                             │
+│   (Executor is NEVER mentioned in bindings)                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
             │                      │                      │
             ▼                      ▼                      ▼
 ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
@@ -2660,9 +2660,9 @@ Internal structure:
 │ (public class)    │  │ (public class)    │  │ (public class)    │
 │                   │  │                   │  │                   │
 │ run(N):           │  │ run(N):           │  │ run(N):           │
-│  N>0 → sync loop  │  │  N>0 → sync loop  │  │  (sync only for   │
-│  N=0 → exec_      │  │  N=0 → exec_      │  │   now)            │
-│       .run_async() │  │       .run_async() │  │                   │
+│  N>0 -> sync loop │  │  N>0 -> sync loop │  │  (sync only for   │
+│  N=0 -> exec_     │  │  N=0 -> exec_     │  │   now)            │
+│       .run_async()│  │       .run_async()│  │                   │
 │                   │  │                   │  │                   │
 │ PRIVATE:          │  │ PRIVATE:          │  │ PRIVATE:          │
 │  Executor exec_   │  │  Executor exec_   │  │  CoreState[2]     │
@@ -2674,19 +2674,19 @@ Internal structure:
          └──────────┬───────────┘
                     ▼
       ┌─────────────────────────────────────┐
-      │      Thread-Safe I/O Devices         │
+      │      Thread-Safe I/O Devices        │
       │                                     │
-      │  UART  — mutex on rx_fifo/tx_output │
-      │  GPIO  — std::atomic<uint32_t>      │
-      │  VGA   — mutex on chars[]/pixels[]  │
-      │  Timer — CPU-thread-only (no share) │
+      │  UART  - mutex on rx_fifo/tx_output │
+      │  GPIO  - std::atomic<uint32_t>      │
+      │  VGA   - mutex on chars[]/pixels[]  │
+      │  Timer - CPU-thread-only (no share) │
       └─────────────────────────────────────┘
 ```
 
 ### 10.5 Executor Class (Internal Utility)
 
 ```cpp
-// executor.h — NOT part of public API. Internal implementation detail.
+// executor.h - NOT part of public API. Internal implementation detail.
 class Executor {
 public:
     using StepFn = std::function<void()>;
@@ -2706,19 +2706,19 @@ private:
     std::condition_variable cv_run_, cv_done_;
     // ... signaling state ...
 
-    void thread_main();  // loop: wait → step N times → notify
+    void thread_main();  // loop: wait -> step N times -> notify
 };
 ```
 
 **When `~Executor()` is called:**
 
-`Executor` is a private member of `CPU` and `PipelinedCPU`. Neither class declares an explicit destructor. When the owning object is destroyed (C++ RAII scope exit, or Python's garbage collector releasing the pybind11 handle → `delete`), the compiler-generated destructor destroys all members in reverse declaration order. This triggers `~Executor()`, which:
+`Executor` is a private member of `CPU` and `PipelinedCPU`. Neither class declares an explicit destructor. When the owning object is destroyed (C++ RAII scope exit, or Python's garbage collector releasing the pybind11 handle -> `delete`), the compiler-generated destructor destroys all members in reverse declaration order. This triggers `~Executor()`, which:
 
 1. Sets `stop_requested_ = true` (breaks out of any active step loop)
 2. Sets `shutdown_ = true` and signals `cv_run_` (wakes the sleeping thread)
 3. Calls `thread_.join()` (blocks until the background thread exits)
 
-This guarantees the background thread is fully stopped before any other member (`mem_`, `uart_`, etc.) is destroyed — no dangling references.
+This guarantees the background thread is fully stopped before any other member (`mem_`, `uart_`, etc.) is destroyed - no dangling references.
 
 Usage inside a model class:
 
@@ -2766,7 +2766,7 @@ cpu.run(0)              ─── exec_.run_async(0) ─────────
    (returns immediately)                                   step() step() step()
 cpu.uart_send([0x41])   ─── thread-safe (UART mutex) ──   step() step() ...
 cpu.vga_get_char_row()  ─── thread-safe (VGA mutex) ───   step() step() ...
-cpu.stop()              ─── sets atomic flag ──────────►  checks → breaks
+cpu.stop()              ─── sets atomic flag ──────────►  checks -> breaks
                                                            (thread sleeps)
 cpu.get_reg(5)          ─── safe (thread is sleeping) ──
 cpu.run(5000)           ─── sync loop on main thread ───  (thread still sleeping)
@@ -2788,62 +2788,62 @@ cpu.run(5000)           ─── sync loop on main thread ───  (thread st
 ### 10.9 Thread-Safe I/O Device Design
 
 ```
-┌──────────────────────────────────────────┐
+┌───────────────────────────────────────────┐
 │              UART (IODevice)              │
-├──────────────────────────────────────────┤
-│ Called by CPU thread (step() path):      │
-│   read(0x00)  ← locks rx_mutex_, pops   │
-│   write(0x00) ← locks tx_mutex_, pushes  │
-├──────────────────────────────────────────┤
-│ Called by main thread (Python API):      │
-│   host_send() ← locks rx_mutex_, pushes  │
-│   host_recv() ← locks tx_mutex_, swaps   │
-└──────────────────────────────────────────┘
+├───────────────────────────────────────────┤
+│ Called by CPU thread (step() path):       │
+│   read(0x00)  <- locks rx_mutex_, pops    │
+│   write(0x00) <- locks tx_mutex_, pushes  │
+├───────────────────────────────────────────┤
+│ Called by main thread (Python API):       │
+│   host_send() <- locks rx_mutex_, pushes  │
+│   host_recv() <- locks tx_mutex_, swaps   │
+└───────────────────────────────────────────┘
 
-┌──────────────────────────────────────────┐
-│              GPIO (IODevice)             │
-├──────────────────────────────────────────┤
-│ CPU thread:  read()  ← atomic load      │
-│              write() ← atomic store      │
-├──────────────────────────────────────────┤
-│ Main thread: set_input() ← atomic store │
-│              get_output() ← atomic load  │
-└──────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│              GPIO (IODevice)              │
+├───────────────────────────────────────────┤
+│ CPU thread:  read()  <- atomic load       │
+│              write() <- atomic store      │
+├───────────────────────────────────────────┤
+│ Main thread: set_input() <- atomic store  │
+│              get_output() <- atomic load  │
+└───────────────────────────────────────────┘
 
-┌──────────────────────────────────────────┐
-│              VGA (IODevice)              │
-├──────────────────────────────────────────┤
-│ CPU thread:  write(0x18) ← char_mutex_  │
-│              write(0x14) ← pixel_mutex_  │
-├──────────────────────────────────────────┤
-│ Main thread: get_char_row() ← char_mutex_│
-│              get_framebuffer()← pixel_mu │
-└──────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│              VGA (IODevice)               │
+├───────────────────────────────────────────┤
+│ CPU thread:  write(0x18) <- char_mutex_   │
+│              write(0x14) <- pixel_mutex_  │
+├───────────────────────────────────────────┤
+│ Main thread: get_char_row() <- char_mutex_│
+│              get_framebuffer()<- pixel_mu │
+└───────────────────────────────────────────┘
 ```
 
 ### 10.10 File Structure (Final)
 
 ```
 src/hardware/
-├── cpu_base.h          ← CRTP base class: shared state, I/O, accessors
-├── executor.h          ← Internal thread utility (NOT public API)
-├── cpu.h / cpu.cpp     ← Single-cycle model (derives CPUBase, owns Executor)
-├── pipelined_cpu.h/cpp ← Pipeline model (derives CPUBase, owns Executor)
-├── multicore.h         ← Multi-core model (sync only, for now)
-├── pipeline.h          ← Pipeline stage structs, PerfCounters
-├── rv32_decode.h       ← Instruction decoder
-├── memory.h            ← Memory hierarchy
-├── io_bus.h            ← I/O dispatch
-├── uart.h              ← Thread-safe UART
-├── gpio.h              ← Thread-safe GPIO (atomic)
-├── vga.h               ← Thread-safe VGA
-├── timer.h             ← Timer (CPU-only, no sharing)
-├── cache.h             ← Cache model
-├── mem_hierarchy.h     ← SDRAM + on-chip RAM
-└── mutex.h             ← Hardware mutex (for MultiCore)
+├── cpu_base.h          <- CRTP base class: shared state, I/O, accessors
+├── executor.h          <- Internal thread utility (NOT public API)
+├── cpu.h / cpu.cpp     <- Single-cycle model (derives CPUBase, owns Executor)
+├── pipelined_cpu.h/cpp <- Pipeline model (derives CPUBase, owns Executor)
+├── multicore.h         <- Multi-core model (sync only, for now)
+├── pipeline.h          <- Pipeline stage structs, PerfCounters
+├── rv32_decode.h       <- Instruction decoder
+├── memory.h            <- Memory hierarchy
+├── io_bus.h            <- I/O dispatch
+├── uart.h              <- Thread-safe UART
+├── gpio.h              <- Thread-safe GPIO (atomic)
+├── vga.h               <- Thread-safe VGA
+├── timer.h             <- Timer (CPU-only, no sharing)
+├── cache.h             <- Cache model
+├── mem_hierarchy.h     <- SDRAM + on-chip RAM
+└── mutex.h             <- Hardware mutex (for MultiCore)
 
 src/bridge/
-└── bindings.cpp        ← pybind11: binds CPU, PipelinedCPU, MultiCore directly
+└── bindings.cpp        <- pybind11: binds CPU, PipelinedCPU, MultiCore directly
 
 ```
 
@@ -2851,7 +2851,7 @@ src/bridge/
 
 | Rule | Rationale |
 |------|-----------|
-| Public classes ARE the API | Users write `PipelinedCPU cpu;` — this never changes |
+| Public classes ARE the API | Users write `PipelinedCPU cpu;` - this never changes |
 | Executor is private/internal | Can be refactored/replaced without affecting users |
 | Methods only added, never removed | Backward compatibility guaranteed |
 | `run(N>0)` = sync, no thread | Zero overhead for non-interactive use |
@@ -2865,7 +2865,7 @@ src/bridge/
 
 ### Problem
 
-During Phase 10 (Internal Executor Pattern), the refactoring inadvertently removed `cpu_base.h` — the CRTP base class that eliminated code duplication between `CPU` and `PipelinedCPU`. The Executor extraction was correct, but the refactoring had the unintended side effect of inlining all shared state and methods back into both derived classes independently, creating ~40 lines of duplicated declarations per class.
+During Phase 10 (Internal Executor Pattern), the refactoring inadvertently removed `cpu_base.h` - the CRTP base class that eliminated code duplication between `CPU` and `PipelinedCPU`. The Executor extraction was correct, but the refactoring had the unintended side effect of inlining all shared state and methods back into both derived classes independently, creating ~40 lines of duplicated declarations per class.
 
 ### What was lost
 
@@ -2879,12 +2879,12 @@ During Phase 10 (Internal Executor Pattern), the refactoring inadvertently remov
 Restored `cpu_base.h` with the CRTP pattern, adapted to coexist with the Executor pattern:
 
 ```
-CPUBase<Derived>           ← CRTP template: shared state + methods
-  ├─ CPU                   ← adds: cycles_, Executor, step(), execute()
-  └─ PipelinedCPU         ← adds: pipeline stages, perf counters, CSRs, Executor
+CPUBase<Derived>           <- CRTP template: shared state + methods
+  ├─ CPU                   <- adds: cycles_, Executor, step(), execute()
+  └─ PipelinedCPU         <- adds: pipeline stages, perf counters, CSRs, Executor
 ```
 
-The `Executor` remains in each derived class (not in the base) because its lambdas capture the derived `this` pointer. This is correct — Executor is an internal implementation detail of each model's threading strategy.
+The `Executor` remains in each derived class (not in the base) because its lambdas capture the derived `this` pointer. This is correct - Executor is an internal implementation detail of each model's threading strategy.
 
 ### Key design point
 
@@ -2892,4 +2892,128 @@ The `Executor` remains in each derived class (not in the base) because its lambd
 
 ### Verification
 
-All 18 regression tests pass. All demos (01–08c) produce identical output to pre-fix code. Zero behavioral change — purely structural.
+All 18 regression tests pass. All demos (01–08c) produce identical output to pre-fix code. Zero behavioral change - purely structural.
+
+## Phase 11. RISC-V Helper Tools with Peripheral Drivers (`riscvtools/`)
+
+### 11.1 Purpose
+
+`src/riscvtools/` provides Python host-side utilities that bridge between the real world (your keyboard and terminal) and the simulated I/O devices (UART FIFO, VGA buffer). It also contains the instruction encoder (`asmpack`) from Phase 1 and the assembly toolchain wrapper.
+
+### 11.2 Where It Fits in the Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ src/demos/                (User entry points: make demo-XX)              │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │ uses
+┌────────────────────────────────────▼────────────────────────────────────┐
+│ src/riscvtools/           (Host-side: assembler, terminal drivers)       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ src/bridge/bindings.cpp   (pybind11 -> build/hades.*.so)                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ src/hardware/             (C++ CPU, cache, memory, I/O devices)         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 11.3 Components
+
+| File | Class | Role | Used by |
+|------|-------|------|---------|
+| `asmpack.py` | (functions) | RV32I instruction encoders (`encode_r`, `encode_i`, etc.) | demo_01–08, test_cpu |
+| `assemblyloader.py` | `AssemblyLoader` | Assembles .S files with gcc, loads into CPU | demo_08b, demo_08c, demo_11 |
+| `terminaldisplay.py` | `TerminalDisplay` | Reads VGA char+color buffers, renders with ANSI colors | demo_11 |
+| `terminalinput.py` | `TerminalInput` | Reads keyboard input, sends to CPU via UART | demo_11 |
+| `__init__.py` | - | Exports all classes, prints "RISC-V tools imported!" | all demos |
+
+### 11.4 AssemblyLoader
+
+Encapsulates the full cross-compiler toolchain workflow:
+
+```python
+from riscvtools import *
+
+loader = AssemblyLoader()
+if not loader.check_toolchain():
+    print("Install: sudo apt install gcc-riscv64-unknown-elf")
+    sys.exit(1)
+
+cpu = hades.PipelinedCPU()
+bin_size = loader.load(cpu, 'src/programs/echo_terminal.S')
+```
+
+Internally: `.S` -> `riscv64-unknown-elf-gcc` -> `.elf` -> `objcopy` -> `.bin` -> `cpu.load_program()`
+
+Uses `src/programs/link.ld` as default linker script (code at 0x1000, data at 0x0000).
+
+### 11.5 TerminalDisplay
+
+Reads VGA hardware state and renders to host terminal with ANSI color codes:
+
+```python
+display = TerminalDisplay(visible_rows=24)
+display.render(cpu, status_line="[Cycles: 103]")
+```
+
+Internally:
+1. Calls `cpu.vga_get_char_buffer()` - gets 80×60 ASCII characters
+2. Calls `cpu.vga_get_color_buffer()` - gets 80×60 color attributes
+3. Maps color IDs to ANSI escape codes (0=white, 1=red, 2=green, 3=blue, 4=yellow, 5=cyan, 6=magenta)
+4. Clears terminal with `\033[H\033[J` and redraws
+
+The color information comes from the **VGA hardware** (set by CPU assembly), NOT from Python tracking keyboard input.
+
+### 11.6 TerminalInput
+
+Bridges keyboard to UART:
+
+```python
+terminal = TerminalInput(cpu)
+terminal.send_line("Hello")   # sends bytes + newline to UART RX FIFO
+terminal.send_chars("$r")     # sends without newline
+user = terminal.read_line()   # reads from keyboard (input())
+```
+
+### 11.7 Demo 11: Echo Terminal
+
+`src/demos/demo_11_echo_terminal.py` + `src/programs/echo_terminal.S`
+
+An interactive colored terminal running entirely on the simulated CPU:
+- Assembles `echo_terminal.S` using `AssemblyLoader`
+- User types characters -> `TerminalInput` sends to CPU via UART
+- CPU assembly parses `$` commands, sets VGA color, writes characters
+- `TerminalDisplay` reads VGA char+color buffers, renders with ANSI colors
+- `$q` -> CPU halts -> Python detects `cpu.is_halted()` -> exits
+
+### 11.8 Bug Fixed: Halt Detection
+
+**Problem:** The original quit detection used a cycle-comparison hack:
+```python
+old_cycles = cpu.get_cycles()
+cpu.run(100)
+if cpu.get_cycles() == old_cycles:  # never true - pipeline always increments mcycle
+    running = False
+```
+
+`PipelinedCPU::pipeline_cycle()` always does `perf_.mcycle++` before checking `halted_`, so the cycle count was never equal after `run()` - making quit undetectable.
+
+**Fix:** Replaced with `cpu.is_halted()` and exposed `is_halted()` in pybind11 bindings for both `CPU` and `PipelinedCPU`.
+
+### 11.9 Full System Diagram (Demo 11)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         YOUR TERMINAL                                   │
+│  Keyboard ──► riscvtools.TerminalInput ──► cpu.uart_send()              │
+│  Screen   ◄── riscvtools.TerminalDisplay ◄── cpu.vga_get_*()            │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                    build/hades.*.so (C++ Engine)                        │
+│                                                                         │
+│  UART RX FIFO ──► CPU reads ──► CPU processes ──► VGA char+color buf    │
+│  UART TX FIFO ◄── CPU writes                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Key principle: **Python never interprets the data** - it just shuttles bytes between keyboard↔UART and VGA↔terminal. All logic (including color commands like `$r`) runs in the CPU assembly code.

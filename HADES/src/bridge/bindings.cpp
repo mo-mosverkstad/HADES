@@ -18,6 +18,7 @@ PYBIND11_MODULE(hades, m) {
         .def("run", &CPU::run, py::arg("max_instructions") = 1000000)
         .def("stop", &CPU::stop)
         .def("is_running", &CPU::is_running)
+        .def("is_halted", &CPU::is_halted)
         .def("reset", &CPU::reset)
         .def("get_cycles", &CPU::get_cycles)
         .def("get_pc", &CPU::get_pc)
@@ -38,6 +39,7 @@ PYBIND11_MODULE(hades, m) {
         .def("gpio_get_output", &CPU::gpio_get_output)
         .def("vga_get_framebuffer", &CPU::vga_get_framebuffer)
         .def("vga_get_char_buffer", &CPU::vga_get_char_buffer)
+        .def("vga_get_color_buffer", &CPU::vga_get_color_buffer)
         .def("vga_get_char_row", &CPU::vga_get_char_row, py::arg("row"));
 
     py::class_<PerfCounters>(m, "PerfCounters")
@@ -55,6 +57,7 @@ PYBIND11_MODULE(hades, m) {
         .def("run", &PipelinedCPU::run, py::arg("max_instructions") = 1000000)
         .def("stop", &PipelinedCPU::stop)
         .def("is_running", &PipelinedCPU::is_running)
+        .def("is_halted", &PipelinedCPU::is_halted)
         .def("reset", &PipelinedCPU::reset)
         .def("get_cycles", &PipelinedCPU::get_cycles)
         .def("get_instret", &PipelinedCPU::get_instret)
@@ -77,6 +80,7 @@ PYBIND11_MODULE(hades, m) {
         .def("gpio_get_output", &PipelinedCPU::gpio_get_output)
         .def("vga_get_framebuffer", &PipelinedCPU::vga_get_framebuffer)
         .def("vga_get_char_buffer", &PipelinedCPU::vga_get_char_buffer)
+        .def("vga_get_color_buffer", &PipelinedCPU::vga_get_color_buffer)
         .def("vga_get_char_row", &PipelinedCPU::vga_get_char_row, py::arg("row"));
 
     py::class_<MultiCore>(m, "MultiCore")

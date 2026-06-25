@@ -79,6 +79,9 @@ demo-08c: engine
 demo-08d: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_08d_game_interactive.py
 
+demo-11: engine
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_11_echo_terminal.py
+
 demo-all: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_01_basic_cpu.py
 	@echo ""
@@ -95,6 +98,8 @@ demo-all: engine
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_07_vga.py
 	@echo ""
 	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_08_game.py
+	@echo ""
+	PYTHONPATH=$(BUILDDIR):src python3 src/demos/demo_11_echo_terminal.py
 
 clean:
 	rm -rf $(BUILDDIR) src/programs/*.elf src/programs/*.bin
