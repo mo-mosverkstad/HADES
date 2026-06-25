@@ -75,8 +75,7 @@ private:
             running_ = true;
 
             uint64_t count = 0;
-            uint64_t limit = (budget_ == 0) ? UINT64_MAX : budget_;
-            while (count < limit) {
+            while (budget_ == 0 || count < budget_) {
                 if (stop_requested_.load(std::memory_order_relaxed)) break;
                 if (halted_()) break;
                 step_();
