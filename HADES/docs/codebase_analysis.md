@@ -2710,6 +2710,16 @@ private:
 };
 ```
 
+**When `~Executor()` is called:**
+
+`Executor` is a private member of `CPU` and `PipelinedCPU`. Neither class declares an explicit destructor. When the owning object is destroyed (C++ RAII scope exit, or Python's garbage collector releasing the pybind11 handle → `delete`), the compiler-generated destructor destroys all members in reverse declaration order. This triggers `~Executor()`, which:
+
+1. Sets `stop_requested_ = true` (breaks out of any active step loop)
+2. Sets `shutdown_ = true` and signals `cv_run_` (wakes the sleeping thread)
+3. Calls `thread_.join()` (blocks until the background thread exits)
+
+This guarantees the background thread is fully stopped before any other member (`mem_`, `uart_`, etc.) is destroyed — no dangling references.
+
 Usage inside a model class:
 
 ```cpp
