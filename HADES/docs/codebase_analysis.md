@@ -2815,9 +2815,10 @@ cpu.run(5000)           ─── sync loop on main thread ───  (thread st
 
 ```
 src/hardware/
+├── cpu_base.h          ← CRTP base class: shared state, I/O, accessors
 ├── executor.h          ← Internal thread utility (NOT public API)
-├── cpu.h / cpu.cpp     ← Single-cycle model (owns Executor internally)
-├── pipelined_cpu.h/cpp ← Pipeline model (owns Executor internally)
+├── cpu.h / cpu.cpp     ← Single-cycle model (derives CPUBase, owns Executor)
+├── pipelined_cpu.h/cpp ← Pipeline model (derives CPUBase, owns Executor)
 ├── multicore.h         ← Multi-core model (sync only, for now)
 ├── pipeline.h          ← Pipeline stage structs, PerfCounters
 ├── rv32_decode.h       ← Instruction decoder
@@ -2834,9 +2835,6 @@ src/hardware/
 src/bridge/
 └── bindings.cpp        ← pybind11: binds CPU, PipelinedCPU, MultiCore directly
 
-Dead files (can be removed):
-├── cpu_base.h          ← Old CRTP base (no longer included anywhere)
-└── cpu_concept.h       ← Unused concept definition
 ```
 
 ### 10.11 Design Rules
@@ -2850,3 +2848,38 @@ Dead files (can be removed):
 | `run(0)` = async via internal Executor | Thread only spawned when actually needed |
 | I/O devices self-protect | Mutexes/atomics inside the device, not outside |
 | pybind binds model classes directly | No wrapper types leak into Python |
+
+---
+
+## Phase 10.1. Restore CRTP Base Class (`cpu_base.h`)
+
+### Problem
+
+During Phase 10 (Internal Executor Pattern), the refactoring inadvertently removed `cpu_base.h` — the CRTP base class that eliminated code duplication between `CPU` and `PipelinedCPU`. The Executor extraction was correct, but the refactoring had the unintended side effect of inlining all shared state and methods back into both derived classes independently, creating ~40 lines of duplicated declarations per class.
+
+### What was lost
+
+`CPUBase<Derived>` provided:
+- Shared state: `regs_[32]`, `pc_`, `halted_`, `io_enabled_`, `io_bus_`, `mem_`, `timer_`, `uart_`, `gpio_`, `vga_`
+- Shared public methods: `load_program()`, `load_data()`, `get_pc()`, `get_reg()`, `read_mem()`, `is_halted()`, all cache/memory config, all I/O accessors
+- Shared protected: `write_reg()`, `reset_base()`
+
+### Fix applied
+
+Restored `cpu_base.h` with the CRTP pattern, adapted to coexist with the Executor pattern:
+
+```
+CPUBase<Derived>           ← CRTP template: shared state + methods
+  ├─ CPU                   ← adds: cycles_, Executor, step(), execute()
+  └─ PipelinedCPU         ← adds: pipeline stages, perf counters, CSRs, Executor
+```
+
+The `Executor` remains in each derived class (not in the base) because its lambdas capture the derived `this` pointer. This is correct — Executor is an internal implementation detail of each model's threading strategy.
+
+### Key design point
+
+`CPUBase<T>` provides a `reset_base()` protected method that both derived classes call from their `reset()`. This eliminates duplicated I/O device registration code (`io_bus_.register_device(...)`) that was previously copy-pasted in both `CPU::reset()` and `PipelinedCPU::reset()`.
+
+### Verification
+
+All 18 regression tests pass. All demos (01–08c) produce identical output to pre-fix code. Zero behavioral change — purely structural.
