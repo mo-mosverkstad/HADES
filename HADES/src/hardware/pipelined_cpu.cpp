@@ -4,25 +4,12 @@
 PipelinedCPU::PipelinedCPU() { reset(); }
 
 void PipelinedCPU::reset() {
-    for (int i = 0; i < 32; i++) regs_[i] = 0;
-    pc_ = 0x1000;
-    halted_ = false;
-    io_enabled_ = false;
+    reset_base();
     ifid_ = {};
     ex_ = {};
     memwb_ = {};
     perf_.reset();
     csrs_.clear();
-    mem_.reset();
-    timer_.reset();
-    uart_.reset();
-    gpio_.reset();
-    vga_.reset();
-    io_bus_ = IOBus();
-    io_bus_.register_device(0xF000, &timer_);
-    io_bus_.register_device(0xF020, &uart_);
-    io_bus_.register_device(0xF040, &gpio_);
-    io_bus_.register_device(0xF080, &vga_);
 }
 
 void PipelinedCPU::step() {
