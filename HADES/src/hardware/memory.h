@@ -10,6 +10,11 @@
 // Handles address translation (MMU), caching, and hierarchy latency transparently.
 // The CPU doesn't know or care about any of this — it just reads/writes virtual addresses.
 
+/**
+ * Memory access port with MMU translation, cache, and I/O routing.
+ * Each port (imem/dmem) independently tracks cache misses and faults.
+ * Addresses >= 0xF000 are routed to the I/O bus instead of backing memory.
+ */
 class MemoryPort {
 public:
     explicit MemoryPort(MemHierarchy& backing, IOBus& io_bus, const bool& io_enabled,
@@ -196,6 +201,11 @@ private:
 // Caches, hierarchy, SDRAM, MMU — all internal details.
 // The CPU sees only virtual addresses; translation is transparent.
 
+/**
+ * Top-level memory system with separate instruction and data ports.
+ * Owns the backing MemHierarchy, MMU, and provides port accessors.
+ * Configures cache and hierarchy settings globally for both ports.
+ */
 class Memory {
 public:
     Memory(IOBus& io_bus, const bool& io_enabled)

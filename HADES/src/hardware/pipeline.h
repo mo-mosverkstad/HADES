@@ -1,15 +1,16 @@
 #pragma once
 #include <cstdint>
 
-// 3-stage pipeline: IF/ID → EX → MEM/WB
-// Matches DTEK-V teaching processor
+// 3-stage pipeline: IF/ID -> EX -> MEM/WB
 
+/** IF/ID pipeline register: holds fetched instruction and its PC. */
 struct StageIFID {
     uint32_t instr = 0;
     uint32_t pc = 0;
     bool valid = false;
 };
 
+/** EX pipeline register: holds ALU result and control signals. */
 struct StageEX {
     uint32_t instr = 0;
     uint32_t pc = 0;
@@ -25,6 +26,7 @@ struct StageEX {
     bool valid = false;
 };
 
+/** MEM/WB pipeline register: holds writeback value and control. */
 struct StageMEMWB {
     uint32_t rd = 0;
     uint32_t result = 0;      // value to write back
@@ -33,13 +35,14 @@ struct StageMEMWB {
     bool valid = false;
 };
 
-// Performance counters (DTEK-V compatible CSRs)
+/** Performance counters accessible via CSR instructions. */
 struct PerfCounters {
     uint64_t mcycle = 0;        // total cycles
     uint64_t minstret = 0;      // retired instructions
     uint64_t stalls_data = 0;   // data hazard stalls (load-use)
     uint64_t stalls_branch = 0; // branch penalty cycles
 
+    /** Resets all counters to zero. */
     void reset() {
         mcycle = 0;
         minstret = 0;
@@ -48,18 +51,18 @@ struct PerfCounters {
     }
 };
 
-// CSR addresses (RISC-V standard)
+/** CSR addresses (RISC-V standard + HADES extensions). */
 enum CSR_Addr {
-    CSR_MCYCLE      = 0xB00,
-    CSR_MINSTRET    = 0xB02,
-    CSR_MCYCLEH     = 0xB80,
-    CSR_MINSTRETH   = 0xB82,
+    CSR_MCYCLE      = 0xB00,   // cycle count (low 32)
+    CSR_MINSTRET    = 0xB02,   // retired instructions (low 32)
+    CSR_MCYCLEH     = 0xB80,   // cycle count (high 32)
+    CSR_MINSTRETH   = 0xB82,   // retired instructions (high 32)
     // Custom performance counters
     CSR_MHPMCOUNTER3 = 0xB03,  // stalls_data
     CSR_MHPMCOUNTER4 = 0xB04,  // stalls_branch
     // Trap handling
     CSR_MTVEC       = 0x305,   // trap vector base address
-    CSR_MEPC        = 0x341,   // exception PC
-    CSR_MCAUSE      = 0x342,   // trap cause
-    CSR_SATP        = 0x180,   // address translation
+    CSR_MEPC        = 0x341,   // exception PC (saved on interrupt)
+    CSR_MCAUSE      = 0x342,   // trap cause code
+    CSR_SATP        = 0x180,   // address translation (MMU page table base)
 };

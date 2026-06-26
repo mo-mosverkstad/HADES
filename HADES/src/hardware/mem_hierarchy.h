@@ -89,6 +89,11 @@ private:
 
 // Memory hierarchy controller
 // Routes addresses and computes access latency
+/**
+ * Memory hierarchy controller: 1MB flat backing store with optional SDRAM timing model.
+ * When hierarchy is enabled, accesses incur row hit/miss latency.
+ * When disabled, all accesses are single-cycle (backward compatible).
+ */
 class MemHierarchy {
 public:
     // static constexpr uint32_t ONCHIP_SIZE = 65536; // 64KB on-chip RAM

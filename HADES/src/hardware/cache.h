@@ -5,6 +5,11 @@
 // DTEK-V L1 Cache: 2KB, direct-mapped, 32-byte blocks, 64 lines
 // Address breakdown: [tag | index(6 bits) | offset(5 bits)]
 
+/**
+ * Direct-mapped L1 cache: 2KB, 32-byte blocks, 64 lines.
+ * Read: allocate on miss. Write: write-through, no-write-allocate.
+ * Tracks hit/miss counts for performance analysis.
+ */
 class Cache {
 public:
     static constexpr uint32_t NUM_LINES = 64;

@@ -1,3 +1,4 @@
+"""RV32I instruction encoders and register/opcode constants for HADES."""
 import struct
 
 # Register aliases
@@ -21,20 +22,24 @@ OP_SYSTEM = 0b1110011
 ECALL = 0b00000000000000000000000001110011
 
 def encode_r(funct7, rs2, rs1, funct3, rd, opcode):
+    """Encodes an R-type instruction. Returns 32-bit instruction word."""
     return (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
 
 
 def encode_i(imm, rs1, funct3, rd, opcode):
+    """Encodes an I-type instruction (12-bit signed immediate). Returns 32-bit instruction word."""
     return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
 
 
 def encode_s(imm, rs2, rs1, funct3, opcode):
+    """Encodes an S-type instruction (store, 12-bit split immediate). Returns 32-bit instruction word."""
     imm11_5 = (imm >> 5) & 0x7F
     imm4_0 = imm & 0x1F
     return (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (imm4_0 << 7) | opcode
 
 
 def encode_b(imm, rs2, rs1, funct3, opcode):
+    """Encodes a B-type instruction (branch, PC-relative). Returns 32-bit instruction word."""
     imm12 = (imm >> 12) & 1
     imm10_5 = (imm >> 5) & 0x3F
     imm4_1 = (imm >> 1) & 0xF
@@ -44,10 +49,12 @@ def encode_b(imm, rs2, rs1, funct3, opcode):
 
 
 def encode_u(imm, rd, opcode):
+    """Encodes a U-type instruction (LUI/AUIPC, upper 20 bits). Returns 32-bit instruction word."""
     return (imm & 0xFFFFF000) | (rd << 7) | opcode
 
 
 def encode_j(imm, rd, opcode):
+    """Encodes a J-type instruction (JAL, PC-relative jump). Returns 32-bit instruction word."""
     imm20 = (imm >> 20) & 1
     imm10_1 = (imm >> 1) & 0x3FF
     imm11 = (imm >> 11) & 1
@@ -56,5 +63,5 @@ def encode_j(imm, rd, opcode):
 
 
 def to_bytes(instructions):
-    """Convert list of 32-bit instructions to bytes (little-endian)."""
+    """Converts a list of 32-bit instruction words to little-endian bytes."""
     return b''.join(struct.pack('<I', i) for i in instructions)

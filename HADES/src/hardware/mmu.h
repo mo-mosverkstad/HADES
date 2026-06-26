@@ -25,6 +25,12 @@
 //   [MODE(1) | ASID(9) | PPN(22)]
 //   MODE=0: no translation, MODE=1: Sv32
 
+/**
+ * RISC-V Sv32 MMU with two-level page table walker and 16-entry TLB.
+ * Translates virtual addresses to physical using SATP-configured page tables.
+ * Reports page faults on unmapped/permission-violating accesses.
+ * Disabled when SATP mode == 0 (bare, no translation).
+ */
 class MMU {
 public:
     static constexpr uint32_t PAGE_SIZE = 4096;       // 4KB

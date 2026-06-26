@@ -6,6 +6,7 @@
 
 struct Decoded; // forward declare
 
+/** Result of ALU execution in the EX stage. */
 struct ExecResult {
     uint32_t result;
     bool writes_rd;
@@ -17,21 +18,42 @@ struct ExecResult {
     uint32_t store_value;
 };
 
-// Pipelined CPU model.
+/**
+ * 3-stage pipelined CPU model (IF/ID -> EX -> MEM/WB).
+ * Features data forwarding, load-use stall detection, and branch penalty.
+ * Supports full RV32I + CSR + interrupts.
+ */
 class PipelinedCPU : public CPUBase<PipelinedCPU> {
 public:
     PipelinedCPU();
 
-    // Execution
+    /**
+     * Executes up to max_instructions retired then returns (blocking).
+     * If max_instructions == 0, starts async execution on background thread (non-blocking).
+     */
     void run(uint32_t max_instructions = 1000000);
+
+    /** Stops async execution. CPU state is preserved. */
     void stop() { exec_.stop(); }
+
+    /** Returns true if the CPU is actively executing on the background thread. */
     bool is_running() const { return exec_.is_running(); }
+
+    /** Resets all CPU and pipeline state to initial values. */
     void reset();
 
     // State access
+
+    /** Returns total elapsed clock cycles (includes stalls). */
     uint64_t get_cycles() const { return perf_.mcycle; }
+
+    /** Returns total retired instructions. */
     uint64_t get_instret() const { return perf_.minstret; }
+
+    /** Returns all performance counters (cycles, instret, stalls). */
     PerfCounters get_perf_counters() const { return perf_; }
+
+    /** Returns true only when halted AND pipeline is fully drained. */
     bool is_halted() const { return halted_ && !memwb_.valid; }
 
 private:

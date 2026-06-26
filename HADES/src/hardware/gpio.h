@@ -7,6 +7,11 @@
 // Main thread calls set_input()/get_output() from Python.
 // input_pins_ and data_out_ are atomic for cross-thread access.
 
+/**
+ * General-purpose I/O with edge detection and interrupt support.
+ * Registers: DATA(0x00), DIRECTION(0x04), INTERRUPTMASK(0x08), EDGECAPTURE(0x0C).
+ * IRQ fires when (edge_capture & interrupt_mask) != 0.
+ */
 class GPIO : public IODevice {
 public:
     GPIO() { reset(); }

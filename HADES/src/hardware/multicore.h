@@ -42,6 +42,13 @@ public:
     }
 };
 
+/**
+ * Dual-core CPU controller with shared memory and I/O.
+ * Round-robin execution: Core 0 step, Core 1 step, tick devices.
+ * Shared: memory, I/O bus (timer, UART, GPIO, mutex).
+ * Independent: registers, PC, cycle/instret counters per core.
+ * Terminates when both cores halt (ECALL).
+ */
 class MultiCore {
 public:
     MultiCore() { reset(); }

@@ -13,6 +13,7 @@ except ImportError:
 
 
 def load_binary(path):
+    """Reads a raw binary file and returns its contents as a list of bytes."""
     with open(path, 'rb') as f:
         return list(f.read())
 

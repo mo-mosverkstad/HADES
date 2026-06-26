@@ -9,6 +9,12 @@
 // Main thread calls host_send()/host_recv() from Python.
 // rx_mutex_ protects rx_fifo_, tx_mutex_ protects tx_output_.
 
+/**
+ * UART (serial I/O) with 64-byte RX/TX FIFOs.
+ * Registers: DATA(0x00), CONTROL(0x04).
+ * Host sends to RX FIFO via host_send(), CPU reads via DATA register.
+ * CPU writes to DATA register -> TX FIFO, host reads via host_recv().
+ */
 class UART : public IODevice {
 public:
     static constexpr uint32_t FIFO_SIZE = 64;

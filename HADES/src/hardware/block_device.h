@@ -27,6 +27,12 @@
 // The disk storage is backed by a std::vector (in-memory).
 // Python can load/save disk images via host API.
 
+/**
+ * Block storage device (disk) with 512-byte sectors and DMA transfer.
+ * Registers: COMMAND(0x00), SECTOR(0x04), BUFFER(0x08), STATUS(0x0C),
+ *            DISK_SIZE(0x10), LATENCY(0x14).
+ * Write SECTOR, BUFFER, then COMMAND to trigger DMA between disk and RAM.
+ */
 class BlockDevice : public IODevice {
 public:
     static constexpr uint32_t SECTOR_SIZE = 512;

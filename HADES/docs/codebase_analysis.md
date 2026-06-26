@@ -2088,6 +2088,8 @@ Move CPU execution to a **dedicated background thread**. The CPU runs continuous
 
 The key insight: **`run(N)` with N>0 remains blocking and backward-compatible.** Only `run(0)` introduces new free-running behavior.
 
+**Practical gotcha:** `run(0)` returns immediately to Python. If the script then exits, the process terminates and the background thread dies. To observe the CPU running indefinitely, either call `cpu.wait()` after `run(0)`, or use `run(N)` with a large N (which blocks Python until N instructions complete).
+
 #### New Methods
 
 | Method | Purpose |

@@ -32,6 +32,12 @@
 // a separate memory region (0xF100-0xFFFF in HADES simplified map).
 // But for simplicity, we use register-based pixel writes.
 
+/**
+ * VGA display controller with character (80x60) and pixel (320x240 RGB565) modes.
+ * Registers: CONTROL(0x00), CURSOR_X(0x04), CURSOR_Y(0x08),
+ *            PIXEL_ADDR(0x0C), PIXEL_DATA(0x10), CHAR_WRITE(0x14).
+ * Char writes auto-advance cursor. Pixel writes auto-increment address.
+ */
 class VGA : public IODevice {
 public:
     static constexpr uint32_t WIDTH = 320;

@@ -10,6 +10,11 @@
 //   0x10 SNAP_LO:   snapshot low (write to capture current counter)
 //   0x14 SNAP_HI:   snapshot high
 
+/**
+ * Countdown timer with IRQ support.
+ * Registers: STATUS(0x00), CONTROL(0x04), PERIOD_LO(0x08), PERIOD_HI(0x0C), SNAP(0x10).
+ * Fires IRQ when countdown reaches zero and ITO (interrupt enable) is set.
+ */
 class Timer : public IODevice {
 public:
     Timer() { reset(); }

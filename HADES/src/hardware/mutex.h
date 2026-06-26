@@ -17,6 +17,12 @@
 // Unlock:
 //   Owner writes VALUE=0 (or any write with VALUE bit = 0)
 
+/**
+ * Hardware mutex for multi-core synchronization.
+ * Register at offset 0x00: [31:1]=owner, [0]=locked.
+ * Lock: write (owner<<1)|1, read back to verify. Unlock: write 0.
+ * Tracks contention count for performance analysis.
+ */
 class Mutex : public IODevice {
 public:
     Mutex() { reset(); }

@@ -5,8 +5,13 @@
 #include <condition_variable>
 #include <functional>
 
-// Internal execution helper. Not part of public API.
-// Drives a step function on a background thread with start/stop/wait semantics.
+/**
+ * Internal execution helper (not part of public API).
+ * Drives a step function either synchronously or on a background thread.
+ * - run_async(N): runs N steps on background thread (0 = unlimited).
+ * - stop(): requests the background thread to pause after current step.
+ * - wait(): blocks until the background run completes or halts.
+ */
 class Executor {
 public:
     using StepFn = std::function<void()>;
