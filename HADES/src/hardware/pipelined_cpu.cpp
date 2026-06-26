@@ -8,8 +8,6 @@ void PipelinedCPU::reset() {
     ifid_ = {};
     ex_ = {};
     memwb_ = {};
-    perf_.reset();
-    csrs_.clear();
 }
 
 void PipelinedCPU::step() {
@@ -37,6 +35,11 @@ void PipelinedCPU::run(uint32_t max_instructions) {
 void PipelinedCPU::pipeline_cycle() {
     perf_.mcycle++;
     if (io_enabled_) io_bus_.tick_all();
+    check_interrupts();
+    if (interrupt_taken_) {
+        interrupt_taken_ = false;
+        ifid_ = {};
+    }
     if (detect_load_use_hazard()) {
         perf_.stalls_data++;
         stage_writeback();
@@ -138,6 +141,16 @@ void PipelinedCPU::stage_execute() {
             ex_.alu_result = old_val;
             return;
         }
+        // funct3 == 0: ECALL or MRET
+        uint32_t imm_field = (ifid_.instr >> 20) & 0xFFF;
+        if (imm_field == 0x302) {
+            // MRET: return from interrupt handler
+            pc_ = csr_read(CSR_MEPC);
+            interrupts_enabled_ = true;
+            ifid_ = {};  // flush pipeline
+            return;
+        }
+        // ECALL = halt
         ex_.valid = true;
         ex_.instr = ifid_.instr;
         ex_.pc = ifid_.pc;
@@ -321,27 +334,3 @@ ExecResult PipelinedCPU::execute_alu(const Decoded& d, uint32_t rs1_val, uint32_
     return r;
 }
 
-// ─── CSR Access ─────────────────────────────────────────────────────────
-
-uint32_t PipelinedCPU::csr_read(uint32_t addr) const {
-    switch (addr) {
-        case CSR_MCYCLE:    return (uint32_t)(perf_.mcycle);
-        case CSR_MCYCLEH:   return (uint32_t)(perf_.mcycle >> 32);
-        case CSR_MINSTRET:  return (uint32_t)(perf_.minstret);
-        case CSR_MINSTRETH: return (uint32_t)(perf_.minstret >> 32);
-        case CSR_MHPMCOUNTER3: return (uint32_t)(perf_.stalls_data);
-        case CSR_MHPMCOUNTER4: return (uint32_t)(perf_.stalls_branch);
-        case 0x180: return mem_.mmu().get_satp(); // SATP
-        default: {
-            auto it = csrs_.find(addr);
-            return (it != csrs_.end()) ? it->second : 0;
-        }
-    }
-}
-
-void PipelinedCPU::csr_write(uint32_t addr, uint32_t value) {
-    csrs_[addr] = value;
-    if (addr == 0x180) {
-        mem_.mmu().set_satp(value); // SATP: configure MMU
-    }
-}

@@ -57,4 +57,9 @@ enum CSR_Addr {
     // Custom performance counters
     CSR_MHPMCOUNTER3 = 0xB03,  // stalls_data
     CSR_MHPMCOUNTER4 = 0xB04,  // stalls_branch
+    // Trap handling
+    CSR_MTVEC       = 0x305,   // trap vector base address
+    CSR_MEPC        = 0x341,   // exception PC
+    CSR_MCAUSE      = 0x342,   // trap cause
+    CSR_SATP        = 0x180,   // address translation
 };

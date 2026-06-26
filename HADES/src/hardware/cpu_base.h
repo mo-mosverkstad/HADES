@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include "memory.h"
 #include "io_bus.h"
 #include "gpio.h"
@@ -10,6 +11,7 @@
 #include "vga.h"
 #include "block_device.h"
 #include "executor.h"
+#include "pipeline.h"
 
 // CRTP base providing common CPU state, I/O devices, and accessor implementations.
 // The Executor (threading) is owned by the derived class since its lambdas capture `this`.
@@ -70,6 +72,48 @@ public:
     uint64_t get_disk_reads() const { return disk_.get_reads(); }
     uint64_t get_disk_writes() const { return disk_.get_writes(); }
 
+    // CSR access (shared by all processor models)
+    uint32_t csr_read(uint32_t addr) const {
+        switch (addr) {
+            case CSR_MCYCLE:       return (uint32_t)(perf_.mcycle);
+            case CSR_MCYCLEH:      return (uint32_t)(perf_.mcycle >> 32);
+            case CSR_MINSTRET:     return (uint32_t)(perf_.minstret);
+            case CSR_MINSTRETH:    return (uint32_t)(perf_.minstret >> 32);
+            case CSR_MHPMCOUNTER3: return (uint32_t)(perf_.stalls_data);
+            case CSR_MHPMCOUNTER4: return (uint32_t)(perf_.stalls_branch);
+            case CSR_SATP: return mem_.mmu().get_satp();
+            default: {
+                auto it = csrs_.find(addr);
+                return (it != csrs_.end()) ? it->second : 0;
+            }
+        }
+    }
+
+    void csr_write(uint32_t addr, uint32_t value) {
+        csrs_[addr] = value;
+        if (addr == CSR_SATP) mem_.mmu().set_satp(value);
+    }
+
+    // Interrupts
+    void set_interrupts_enabled(bool enabled) { interrupts_enabled_ = enabled; }
+    bool get_interrupts_enabled() const { return interrupts_enabled_; }
+
+    void check_interrupts() {
+        if (!interrupts_enabled_) return;
+        if (!io_enabled_) return;
+        if (!io_bus_.any_irq_pending()) return;
+
+        uint32_t mtvec = csr_read(CSR_MTVEC);
+        if (mtvec == 0) return;
+
+        csr_write(CSR_MEPC, pc_);
+        // Set mcause = timer interrupt (bit 31 set = interrupt, code 7 = timer)
+        csr_write(CSR_MCAUSE, 0x80000007);  // interrupt bit | timer (code 7)
+        interrupts_enabled_ = false;
+        pc_ = mtvec;
+        interrupt_taken_ = true;         // signal pipeline to flush
+    }
+
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
@@ -83,6 +127,12 @@ protected:
     GPIO gpio_;
     VGA vga_;
     BlockDevice disk_;
+
+    // Shared CSR and performance state
+    std::unordered_map<uint32_t, uint32_t> csrs_;
+    PerfCounters perf_;
+    bool interrupts_enabled_ = false;
+    bool interrupt_taken_ = false;
 
     void write_reg(uint32_t rd, uint32_t value) {
         if (rd != 0) regs_[rd] = value;
@@ -100,6 +150,10 @@ protected:
         pc_ = 0x1000;
         halted_ = false;
         io_enabled_ = false;
+        interrupts_enabled_ = false;
+        interrupt_taken_ = false;
+        csrs_.clear();
+        perf_.reset();
         mem_.reset();
         timer_.reset();
         uart_.reset();

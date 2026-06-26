@@ -5,17 +5,18 @@ CPU::CPU() { reset(); }
 
 void CPU::reset() {
     reset_base();
-    cycles_ = 0;
 }
 
 void CPU::step() {
     if (halted_) return;
     uint32_t instr = mem_.imem().read_word(pc_);
     if (mem_.imem().has_fault()) { halted_ = true; return; }
-    cycles_ += mem_.imem().drain_penalty();
+    perf_.mcycle += mem_.imem().drain_penalty();
     execute(instr);
     if (io_enabled_) io_bus_.tick_all();
-    cycles_++;
+    check_interrupts();
+    perf_.mcycle++;
+    perf_.minstret++;
 }
 
 void CPU::run(uint32_t max_instructions) {
@@ -86,7 +87,7 @@ void CPU::execute(uint32_t instr) {
             case 0b101: val = mem_.dmem().read_half(addr); break;
         }
         if (mem_.dmem().has_fault()) { halted_ = true; break; }
-        cycles_ += mem_.dmem().drain_penalty();
+        perf_.mcycle += mem_.dmem().drain_penalty();
         write_reg(d.rd, val);
         pc_ += 4;
         break;
@@ -145,7 +146,33 @@ void CPU::execute(uint32_t instr) {
         break;
     }
 
-    case OP_SYSTEM:
+    case OP_SYSTEM: {
+        uint32_t csr_addr = (instr >> 20) & 0xFFF;
+        // funct3 == 0: ECALL or MRET
+        if (d.funct3 == 0) {
+            if (csr_addr == 0x302) {
+                // MRET: return from interrupt
+                pc_ = csr_read(CSR_MEPC);
+                interrupts_enabled_ = true;
+            } else {
+                // ECALL = halt
+                halted_ = true;
+            }
+            break;
+        }
+        // CSR instructions
+        uint32_t rs1_val = regs_[d.rs1];
+        uint32_t old_val = csr_read(csr_addr);
+        switch (d.funct3) {
+            case 0b001: csr_write(csr_addr, rs1_val); break;          // CSRRW
+            case 0b010: csr_write(csr_addr, old_val | rs1_val); break; // CSRRS
+            case 0b011: csr_write(csr_addr, old_val & ~rs1_val); break;// CSRRC
+        }
+        write_reg(d.rd, old_val);
+        pc_ += 4;
+        break;
+    }
+
     default:
         halted_ = true;
         break;

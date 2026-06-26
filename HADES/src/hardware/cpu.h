@@ -15,11 +15,9 @@ public:
     void reset();
 
     // State access
-    uint64_t get_cycles() const { return cycles_; }
+    uint64_t get_cycles() const { return perf_.mcycle; }
 
 private:
-    uint64_t cycles_ = 0;
-
     Executor exec_{[this]{ step(); }, [this]{ return halted_; }};
 
     void step();

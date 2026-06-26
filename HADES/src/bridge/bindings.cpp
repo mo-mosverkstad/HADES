@@ -53,7 +53,9 @@ PYBIND11_MODULE(hades, m) {
              py::arg("sector"), py::arg("data"))
         .def("disk_read_sector", &CPU::disk_read_sector, py::arg("sector"))
         .def("get_disk_reads", &CPU::get_disk_reads)
-        .def("get_disk_writes", &CPU::get_disk_writes);
+        .def("get_disk_writes", &CPU::get_disk_writes)
+        .def("set_interrupts_enabled", &CPU::set_interrupts_enabled, py::arg("enabled"))
+        .def("get_interrupts_enabled", &CPU::get_interrupts_enabled);
 
     py::class_<PerfCounters>(m, "PerfCounters")
         .def_readonly("mcycle", &PerfCounters::mcycle)
@@ -107,7 +109,9 @@ PYBIND11_MODULE(hades, m) {
              py::arg("sector"), py::arg("data"))
         .def("disk_read_sector", &PipelinedCPU::disk_read_sector, py::arg("sector"))
         .def("get_disk_reads", &PipelinedCPU::get_disk_reads)
-        .def("get_disk_writes", &PipelinedCPU::get_disk_writes);
+        .def("get_disk_writes", &PipelinedCPU::get_disk_writes)
+        .def("set_interrupts_enabled", &PipelinedCPU::set_interrupts_enabled, py::arg("enabled"))
+        .def("get_interrupts_enabled", &PipelinedCPU::get_interrupts_enabled);
 
     py::class_<MultiCore>(m, "MultiCore")
         .def(py::init<>())

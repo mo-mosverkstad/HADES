@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include <vector>
-#include <unordered_map>
 #include "cpu_base.h"
 #include "pipeline.h"
 
@@ -40,8 +39,6 @@ private:
     StageIFID ifid_{};
     StageEX ex_{};
     StageMEMWB memwb_{};
-    PerfCounters perf_;
-    std::unordered_map<uint32_t, uint32_t> csrs_;
 
     Executor exec_{[this]{ step(); }, [this]{ return is_halted(); }};
 
@@ -54,6 +51,4 @@ private:
     uint32_t forward_reg(uint32_t reg_idx) const;
     bool detect_load_use_hazard() const;
     static ExecResult execute_alu(const Decoded& d, uint32_t rs1_val, uint32_t rs2_val, uint32_t pc);
-    uint32_t csr_read(uint32_t addr) const;
-    void csr_write(uint32_t addr, uint32_t value);
 };
