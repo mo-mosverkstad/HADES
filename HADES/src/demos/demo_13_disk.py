@@ -55,6 +55,35 @@ print(f"  Written:  'Hello, Disk!'")
 print(f"  Readback: '{text}'")
 print(f"  Match: {'Correct' if text == 'Hello, Disk!' else 'Incorrect'}")
 
+cpu = hades.PipelinedCPU()
+cpu.set_io_enabled(True)
+
+# Prepare a disk with data
+image = bytearray(512)
+image[0:11] = b'Hello Disk!'
+cpu.disk_load_image(list(image))
+
+# CPU program: read sector 0 into RAM at 0x2000
+prog = to_bytes([
+    # t4 = 0xF0A0 (disk base)
+    encode_u(0x0000F000, T4, OP_LUI),
+    encode_i(0x0A0, T4, 0b000, T4, OP_IMM),
+    # SECTOR = 0
+    encode_s(0x04, ZERO, T4, 0b010, OP_STORE),
+    # BUFFER = 0x2000
+    encode_u(0x00002000, T0, OP_LUI),
+    encode_s(0x08, T0, T4, 0b010, OP_STORE),
+    # COMMAND = 1 (READ) — triggers DMA transfer
+    encode_i(1, ZERO, 0b000, T1, OP_IMM),
+    encode_s(0x00, T1, T4, 0b010, OP_STORE),
+    # Now RAM[0x2000..0x21FF] contains sector 0 data
+    ECALL,
+])
+
+cpu.load_program(list(prog))
+cpu.run()
+print(f"DMA read out: {bytes(cpu.read_mem(0x2000, 11))}")  # b'Hello Disk!'
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Part 2: Disk image load/save
 # ═══════════════════════════════════════════════════════════════════════════

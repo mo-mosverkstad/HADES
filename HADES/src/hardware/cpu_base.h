@@ -88,6 +88,13 @@ protected:
         if (rd != 0) regs_[rd] = value;
     }
 
+    static uint8_t dma_read(void* ctx, uint32_t addr) {
+        return static_cast<CPUBase*>(ctx)->mem_.dmem().read_byte(addr);
+    }
+    static void dma_write(void* ctx, uint32_t addr, uint8_t val) {
+        static_cast<CPUBase*>(ctx)->mem_.dmem().write_byte(addr, val);
+    }
+
     void reset_base() {
         for (int i = 0; i < 32; i++) regs_[i] = 0;
         pc_ = 0x1000;
@@ -104,5 +111,6 @@ protected:
         io_bus_.register_device(0xF040, &gpio_);
         io_bus_.register_device(0xF080, &vga_);
         io_bus_.register_device(0xF0A0, &disk_);
+        disk_.set_mem_callbacks(this, dma_read, dma_write);
     }
 };
