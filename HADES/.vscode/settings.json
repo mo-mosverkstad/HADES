@@ -1,0 +1,7 @@
+{
+    "python.analysis.extraPaths": [
+        "build",
+        "src"
+    ],
+    "python.analysis.stubPath": "src"
+}
