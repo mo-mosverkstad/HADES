@@ -129,8 +129,9 @@ public:
     }
 
     // Direct sector read (from Python, bypasses DMA)
-    std::vector<uint8_t> read_sector(uint32_t sector) const {
+    std::vector<uint8_t> read_sector(uint32_t sector) {
         if (sector * SECTOR_SIZE >= disk_.size()) return std::vector<uint8_t>(SECTOR_SIZE, 0);
+        reads_++;
         return std::vector<uint8_t>(
             disk_.begin() + sector * SECTOR_SIZE,
             disk_.begin() + (sector + 1) * SECTOR_SIZE);
@@ -139,6 +140,7 @@ public:
     // Direct sector write (from Python, bypasses DMA)
     void write_sector(uint32_t sector, const std::vector<uint8_t>& data) {
         if (sector * SECTOR_SIZE >= disk_.size()) return;
+        writes_++;
         size_t len = std::min((size_t)SECTOR_SIZE, data.size());
         std::memcpy(&disk_[sector * SECTOR_SIZE], data.data(), len);
     }
@@ -174,13 +176,13 @@ private:
         }
 
         if (command_ == CMD_READ && mem_write_fn_) {
-            // DMA: disk → RAM
+            // DMA: disk -> RAM
             for (uint32_t i = 0; i < SECTOR_SIZE; i++) {
                 mem_write_fn_(mem_ctx_, buffer_addr_ + i, disk_[disk_offset + i]);
             }
             reads_++;
         } else if (command_ == CMD_WRITE && mem_read_fn_) {
-            // DMA: RAM → disk
+            // DMA: RAM -> disk
             for (uint32_t i = 0; i < SECTOR_SIZE; i++) {
                 disk_[disk_offset + i] = mem_read_fn_(mem_ctx_, buffer_addr_ + i);
             }

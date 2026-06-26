@@ -46,7 +46,14 @@ PYBIND11_MODULE(hades, m) {
         .def("mmu_flush_tlb", &CPU::mmu_flush_tlb)
         .def("get_tlb_hits", &CPU::get_tlb_hits)
         .def("get_tlb_misses", &CPU::get_tlb_misses)
-        .def("get_page_faults", &CPU::get_page_faults);
+        .def("get_page_faults", &CPU::get_page_faults)
+        .def("disk_load_image", &CPU::disk_load_image, py::arg("data"))
+        .def("disk_save_image", &CPU::disk_save_image)
+        .def("disk_write_sector", &CPU::disk_write_sector,
+             py::arg("sector"), py::arg("data"))
+        .def("disk_read_sector", &CPU::disk_read_sector, py::arg("sector"))
+        .def("get_disk_reads", &CPU::get_disk_reads)
+        .def("get_disk_writes", &CPU::get_disk_writes);
 
     py::class_<PerfCounters>(m, "PerfCounters")
         .def_readonly("mcycle", &PerfCounters::mcycle)
@@ -93,7 +100,14 @@ PYBIND11_MODULE(hades, m) {
         .def("mmu_flush_tlb", &PipelinedCPU::mmu_flush_tlb)
         .def("get_tlb_hits", &PipelinedCPU::get_tlb_hits)
         .def("get_tlb_misses", &PipelinedCPU::get_tlb_misses)
-        .def("get_page_faults", &PipelinedCPU::get_page_faults);
+        .def("get_page_faults", &PipelinedCPU::get_page_faults)
+        .def("disk_load_image", &PipelinedCPU::disk_load_image, py::arg("data"))
+        .def("disk_save_image", &PipelinedCPU::disk_save_image)
+        .def("disk_write_sector", &PipelinedCPU::disk_write_sector,
+             py::arg("sector"), py::arg("data"))
+        .def("disk_read_sector", &PipelinedCPU::disk_read_sector, py::arg("sector"))
+        .def("get_disk_reads", &PipelinedCPU::get_disk_reads)
+        .def("get_disk_writes", &PipelinedCPU::get_disk_writes);
 
     py::class_<MultiCore>(m, "MultiCore")
         .def(py::init<>())

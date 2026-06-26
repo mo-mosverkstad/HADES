@@ -8,6 +8,7 @@
 #include "timer.h"
 #include "uart.h"
 #include "vga.h"
+#include "block_device.h"
 #include "executor.h"
 
 // CRTP base providing common CPU state, I/O devices, and accessor implementations.
@@ -61,6 +62,14 @@ public:
     uint64_t get_tlb_misses() const { return mem_.mmu().get_tlb_misses(); }
     uint64_t get_page_faults() const { return mem_.mmu().get_page_faults(); }
 
+    // Block Storage Device
+    void disk_load_image(const std::vector<uint8_t>& data) { disk_.load_image(data); }
+    std::vector<uint8_t> disk_save_image() const { return disk_.save_image(); }
+    void disk_write_sector(uint32_t sector, const std::vector<uint8_t>& data) { disk_.write_sector(sector, data); }
+    std::vector<uint8_t> disk_read_sector(uint32_t sector) { return disk_.read_sector(sector); }
+    uint64_t get_disk_reads() const { return disk_.get_reads(); }
+    uint64_t get_disk_writes() const { return disk_.get_writes(); }
+
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
@@ -73,6 +82,7 @@ protected:
     UART uart_;
     GPIO gpio_;
     VGA vga_;
+    BlockDevice disk_;
 
     void write_reg(uint32_t rd, uint32_t value) {
         if (rd != 0) regs_[rd] = value;
@@ -93,5 +103,6 @@ protected:
         io_bus_.register_device(0xF020, &uart_);
         io_bus_.register_device(0xF040, &gpio_);
         io_bus_.register_device(0xF080, &vga_);
+        io_bus_.register_device(0xF0A0, &disk_);
     }
 };
