@@ -3353,3 +3353,203 @@ cpu.get_page_faults()        # Invalid/permission-denied translations
     TLB misses:  2  (first access to code page + data page)
     Page faults: 0
 ```
+
+
+## Phase 13: Block Storage Device (Disk)
+
+### 13.1 Device Design (`layer1_hardware/include/block_device.h`)
+
+A sector-based storage device that enables file system implementation:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Block Device                           │
+│                                                         │
+│  ┌─────────────┐     DMA      ┌──────────────────────┐  │
+│  │ Disk Buffer │◄────────────►│ RAM (at BUFFER addr) │  │
+│  │ (sectors)   │              └──────────────────────┘  │
+│  │             │                                        │
+│  │ Sector 0: [512 bytes]                                │
+│  │ Sector 1: [512 bytes]                                │
+│  │ Sector 2: [512 bytes]                                │
+│  │ ...                                                  │
+│  └─────────────┘                                        │
+│                                                         │
+│  I/O Registers (0xF0A0):                                │
+│    COMMAND -> triggers READ/WRITE                       │
+│    SECTOR  -> which sector to access                    │
+│    BUFFER  -> RAM address for DMA                       │
+│    STATUS  -> idle/busy/done/error                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 13.2 Register Map (base 0xF0A0)
+
+| Offset | Register | R/W | Description |
+|--------|----------|-----|-------------|
+| 0x00 | COMMAND | RW | 0=NOP, 1=READ (disk->RAM), 2=WRITE (RAM->disk) |
+| 0x04 | SECTOR | RW | Sector number (0-based) |
+| 0x08 | BUFFER | RW | RAM address for DMA transfer |
+| 0x0C | STATUS | RW | 0=idle, 1=busy, 2=done, 3=error. Write 0 to clear. |
+| 0x10 | DISK_SIZE | R | Total number of sectors |
+| 0x14 | LATENCY | RW | Cycles per operation (simulates seek time) |
+
+### 13.3 Operation Sequence
+
+```
+CPU:                              Block Device:
+────                              ─────────────
+1. SW sector, 0x04(base)          -> set sector number
+2. SW ram_addr, 0x08(base)        -> set DMA buffer address
+3. SW 1, 0x00(base)               -> COMMAND=READ, triggers transfer
+                                     device copies 512 bytes: disk[sector] -> RAM[buffer]
+                                     STATUS = BUSY
+4. (wait LATENCY cycles)             STATUS = DONE
+5. LW status, 0x0C(base)          -> check STATUS == 2 (done)
+6. (data now in RAM at buffer)
+```
+
+### 13.4 Python Host API
+
+```python
+# Load a disk image (e.g., from a file)
+with open('disk.img', 'rb') as f:
+    cpu.disk_load_image(list(f.read()))
+
+# Direct sector access (bypasses I/O registers, like a debugger)
+cpu.disk_write_sector(0, list(b'BOOT' + b'\x00' * 508))
+data = cpu.disk_read_sector(0)  # returns list of 512 bytes
+
+# Save disk state
+image = cpu.disk_save_image()
+with open('disk.img', 'wb') as f:
+    f.write(bytes(image))
+
+# Statistics
+print(cpu.get_disk_reads())   # CPU-initiated read count
+print(cpu.get_disk_writes())  # CPU-initiated write count
+```
+
+### 13.5 What higher applications can build on this
+
+| OS Feature | How it uses the disk |
+|---|---|
+| File system | Allocate sectors to files, maintain directory in sector 0 |
+| Demand paging | Swap pages to/from disk sectors on page fault |
+| Boot loader | Read kernel binary from disk sector 0 at startup |
+| Persistence | Data survives CPU halt (disk image saved by Python) |
+| Crash recovery | Journaling: write intent to disk before modifying data |
+
+### 13.6 Complete I/O Device Map (All Phases)
+
+```
+┌──────────┬──────────────────────────────────────────────────────┐
+│ Address  │ Device                                               │
+├──────────┼──────────────────────────────────────────────────────┤
+│ 0xF000   │ Timer    (countdown, IRQ, snapshot)         Phase 7  │
+│ 0xF020   │ UART     (FIFO TX/RX, host ↔ CPU)           Phase 7  │
+│ 0xF040   │ GPIO     (pins, edge detect, IRQ)           Phase 7  │
+│ 0xF060   │ Mutex    (atomic lock, multi-core)          Phase 8  │
+│ 0xF080   │ VGA      (320×240 pixel + 80×60 char+color) Phase 9  │
+│ 0xF0A0   │ Disk     (512B sectors, DMA, latency)       Phase 15 │
+└──────────┴──────────────────────────────────────────────────────┘
+```
+
+### 13.7 Demo: `demo_15_disk.py`
+
+| Part | What it does | Verification |
+|------|-------------|-------------|
+| 1 | Write/read sector 0 | "Hello, Disk!" round-trips correctly |
+| 2 | Load 4-sector image, save back | All sectors match, round-trip |
+| 3 | CPU reads disk registers via I/O | DISK_SIZE=4, STATUS=idle, LATENCY=10 |
+| 4 | Modify sector, verify persistence | "MODIFIED" persists across reads |
+
+Run: `make demo-13`
+
+
+### 13.8 Current State (Phase 12 of HADES)
+
+HADES now has a block storage device (`hardware/block_device.h`) with:
+- 512-byte sectors, configurable size (default 128 sectors = 64KB)
+- I/O registers at 0xF0A0: COMMAND, SECTOR, BUFFER, STATUS, DISK_SIZE, LATENCY
+- DMA-style transfer: READ (disk->RAM), WRITE (RAM->disk)
+- Configurable latency (simulates real disk seek time)
+- Python API: `disk_load_image()`, `disk_save_image()`, `disk_read_sector()`, `disk_write_sector()`
+
+### 13.9 Disk usage
+
+#### Boot Sequence
+```c
+// Kernel boot.S reads kernel from disk sector 0
+// 1. Set SECTOR = 0
+// 2. Set BUFFER = 0x1000 (where kernel code goes)
+// 3. Set COMMAND = READ
+// 4. Wait for STATUS == DONE
+// 5. Jump to 0x1000
+```
+
+#### File System (Simple Indexed)
+```
+Sector 0:     Superblock (magic, num_files, free_bitmap)
+Sector 1:     Directory table (filename -> start_sector, size)
+Sector 2-N:   File data blocks
+```
+
+#### Demand Paging (Swap)
+```c
+// On page fault:
+void page_fault_handler(uint32_t vaddr) {
+    uint32_t frame = alloc_frame();
+    uint32_t swap_sector = get_swap_sector(vaddr);
+
+    // Read page from disk into frame
+    *(volatile uint32_t*)(DISK_BASE + 0x04) = swap_sector;
+    *(volatile uint32_t*)(DISK_BASE + 0x08) = frame * PAGE_SIZE;
+    *(volatile uint32_t*)(DISK_BASE + 0x00) = 1;  // CMD_READ
+
+    // Wait for completion
+    while (*(volatile uint32_t*)(DISK_BASE + 0x0C) != 2) {}
+
+    // Update page table
+    map_page(vaddr, frame, PTE_V | PTE_R | PTE_W | PTE_U);
+}
+```
+
+#### File Operations (Kernel Syscalls)
+```c
+int sys_open(const char *path);       // find file in directory
+int sys_read(int fd, void *buf, int n); // read sectors into buffer
+int sys_write(int fd, void *buf, int n); // write buffer to sectors
+int sys_close(int fd);                 // release file descriptor
+```
+
+### 13.10 Disk Image Workflow
+
+```
+Python host                          HADES CPU
+───────────                          ─────────
+1. Create disk.img (Python)
+   cpu.disk_load_image(data)  ──────► Disk buffer populated
+
+2. CPU boots, reads disk
+   (kernel reads sectors via I/O)
+
+3. CPU writes to disk
+   (file system writes via I/O)
+
+4. After halt, save state
+   cpu.disk_save_image()  ◄────────── Disk buffer saved
+   write to disk.img file
+```
+
+### 13.11 ID1206 Topics Enabled
+
+| Topic | How disk enables it |
+|---|---|
+| File system layers | I/O control -> basic FS -> file organization -> logical FS |
+| Block allocation | Contiguous, linked, or indexed allocation of sectors |
+| Directory structures | Flat table or tree in dedicated sectors |
+| File operations | create/open/read/write/close via syscalls |
+| Buffering | OS buffer cache (keep recently-read sectors in RAM) |
+| Crash consistency | Write journal entry before modifying data sectors |
+| Demand paging | Swap pages to/from disk on page fault (with MMU) |
