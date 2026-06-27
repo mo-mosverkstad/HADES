@@ -3555,3 +3555,250 @@ Python host                          HADES CPU
 | Buffering | OS buffer cache (keep recently-read sectors in RAM) |
 | Crash consistency | Write journal entry before modifying data sectors |
 | Demand paging | Swap pages to/from disk on page fault (with MMU) |
+
+---
+
+## Phase 14: Interrupt Support (Timer IRQ + Trap Mechanism)
+
+### 14.1 Goal
+
+Enable the CPU to respond to asynchronous hardware events (interrupts) and
+synchronous exceptions (page faults) by saving state and jumping to a trap
+handler. This is the foundation for preemptive multitasking and demand paging.
+
+### 14.2 What Was Implemented
+
+1. **Shared CSR read/write in CPUBase** (`cpu_base.h`)
+   - `csr_read(addr)` / `csr_write(addr, value)` accessible by both CPU models
+   - Performance counters (mcycle, minstret, stalls) read-only via CSR
+   - General CSR map (`std::unordered_map`) for mtvec, mepc, mcause, mtval, satp
+
+2. **Interrupt checking** (`cpu_base.h: check_interrupts()`)
+   - Called every cycle after instruction execution
+   - Checks: `interrupts_enabled_ && io_enabled_ && io_bus_.any_irq_pending()`
+   - On trigger: mepc=pc, mcause=0x80000007 (timer), pc=mtvec, disable interrupts
+   - Sets `interrupt_taken_` flag for pipeline flush
+
+3. **Exception handling** (`cpu_base.h: take_exception(cause, tval)`)
+   - Synchronous trap for page faults (mcause bit 31 = 0)
+   - mepc=pc (retry faulting instruction), mtval=faulting address
+   - Same jump-to-mtvec mechanism as interrupts
+
+4. **Fault encapsulation** (`cpu_base.h: handle_fault(port)`)
+   - Single-call interface: checks if MemoryPort faulted, takes exception if so
+   - Used at all fault sites (instruction fetch, load, store) in both CPU models
+
+5. **MRET instruction** (both `cpu.cpp` and `pipelined_cpu.cpp`)
+   - Encoded as SYSTEM opcode with imm=0x302
+   - Restores pc from mepc, re-enables interrupts
+   - Pipeline version also flushes ifid stage
+
+6. **Pipeline integration** (`pipelined_cpu.cpp`)
+   - `interrupt_taken_` flag checked at top of pipeline_cycle, flushes ifid
+   - Faults in memory stage invalidate memwb before returning
+
+7. **CSR constants** (`pipeline.h`)
+   - CSR_MTVEC (0x305), CSR_MEPC (0x341), CSR_MCAUSE (0x342), CSR_MTVAL (0x343), CSR_SATP (0x180)
+
+8. **Demo** (`src/demos/demo_14_interrupts.py`)
+   - Part 1: Timer fires repeatedly, handler increments counter, MRET resumes
+   - Part 2: Verifies mepc save/restore correctness
+   - Part 3: Interrupts disabled - confirms no handler invocation
+   - Command: `make demo-14`
+
+### 14.3 Interrupt vs Exception
+
+| Property | Interrupt (async) | Exception (sync) |
+|----------|------------------|------------------|
+| Trigger | Between instructions (device IRQ) | During instruction (page fault) |
+| mcause bit 31 | 1 (set) | 0 (clear) |
+| mepc | Next instruction (resume) | Faulting instruction (retry) |
+| mtval | Unused | Faulting address |
+| Handler action | Service device, MRET | Fix cause (load page), MRET retries |
+
+### 14.4 Execution Model Reminder
+
+```
+run(N) with N > 0:  blocking, executes N instructions then returns to Python
+run(0):             non-blocking, starts CPU on background thread, returns immediately
+                    (thread dies when Python process exits)
+```
+
+---
+
+## Phase 15: Demand Paging (MMU + Disk Exception Handling)
+
+### 15.1 Goal
+
+Wire the MMU page fault mechanism to the block storage device so that
+pages can be loaded from disk on-demand. When the CPU accesses an unmapped
+virtual address, instead of halting, the CPU takes a synchronous exception
+(trap), the OS handler loads the page from disk into RAM, updates the
+page table, and returns — the faulting instruction retries transparently.
+
+### 15.2 Architecture
+
+```
+CPU executes:  lw t0, 0(a0)     (a0 = 0x80001000, virtual address)
+                    |
+                    v
+            MemoryPort.read_word(0x80001000)
+                    |
+                    v
+            MMU.translate(0x80001000)
+                    |
+            Page table entry not valid!
+                    |
+                    v
+            MMU sets: faulted_ = true
+                      fault_addr_ = 0x80001000
+                      fault_type_ = LOAD_PAGE_FAULT
+                    |
+                    v
+            MemoryPort returns 0 (garbage, doesn't matter)
+                    |
+                    v
+            CPU checks: mem_.dmem().has_fault()?  YES
+                    |
+                    v
+            Instead of halted_=true, CPU does:
+              mepc = pc              (save THIS instruction's address)
+              mcause = 0x0D          (load page fault, no interrupt bit)
+              mtval = 0x80001000     (the address that faulted)
+              pc = mtvec             (jump to OS trap handler)
+              interrupts_enabled = false
+                    |
+                    v
+            OS trap handler runs:
+              1. reads mtval -> knows which page is missing
+              2. picks a free RAM frame
+              3. DMA loads page from disk into that frame
+              4. writes page table entry (maps virtual -> physical)
+              5. flushes TLB
+              6. MRET
+                    |
+                    v
+            CPU resumes at mepc (same lw instruction)
+                    |
+                    v
+            MMU.translate(0x80001000) -> SUCCESS (page now mapped)
+                    |
+                    v
+            t0 = data from RAM
+            pc += 4 (instruction completes normally)
+```
+
+### 15.3 Wiring Diagram
+
+```
+┌─────────────────────────────────────────────┐
+│ CPUBase (cpu_base.h)                        │
+│                                             │
+│  check_interrupts()  <- async (timer, etc)  │
+│  check_exception()   <- sync (page fault)   │
+│                                             │
+│  Both do: mepc=pc, pc=mtvec                 │
+│  Difference: mcause value, mtval            │
+└──────────────────┬──────────────────────────┘
+                   │ calls
+                   v
+┌─────────────────────────────────────────────┐
+│ MemoryPort (memory.h)                       │
+│                                             │
+│  has_fault()      -> bool                   │
+│  get_fault_type() -> LOAD/STORE/INST        │
+│  get_fault_addr() -> the virtual address    │
+│  clear_fault()                              │
+└──────────────────┬──────────────────────────┘
+                   │ set by
+                   v
+┌─────────────────────────────────────────────┐
+│ MMU (mmu.h)                                 │
+│                                             │
+│  translate(vaddr) -> if PTE invalid:        │
+│                        set_fault(type, addr) │
+└─────────────────────────────────────────────┘
+```
+
+### 15.4 Exception vs Interrupt
+
+| Property | Exception (page fault) | Interrupt (timer) |
+|----------|----------------------|-------------------|
+| Trigger | During instruction execution | Between instructions |
+| Sync/Async | Synchronous | Asynchronous |
+| mcause bit 31 | 0 (clear) | 1 (set) |
+| mepc | Faulting instruction (retry) | Next instruction (resume) |
+| mtval | Faulting address | Unused |
+| Examples | Load/store/inst page fault | Timer timeout, UART ready |
+
+RISC-V mcause codes (exceptions, bit 31 = 0):
+- 0x0C = Instruction page fault
+- 0x0D = Load page fault
+- 0x0F = Store/AMO page fault
+
+### 15.5 Implementation Changes
+
+1. **Add CSR_MTVAL (0x343)** to `pipeline.h` — stores faulting virtual address
+
+2. **CPU: trap on fault instead of halt** — in `cpu.cpp` and `pipelined_cpu.cpp`,
+   when `has_fault()` is true:
+   ```cpp
+   // Instead of: halted_ = true;
+   csr_write(CSR_MEPC, pc_);                    // retry this instruction
+   csr_write(CSR_MCAUSE, fault_type);           // 0x0D or 0x0F (no interrupt bit)
+   csr_write(CSR_MTVAL, mem_.dmem().get_fault_addr());
+   mem_.dmem().clear_fault();
+   interrupts_enabled_ = false;
+   pc_ = csr_read(CSR_MTVEC);
+   interrupt_taken_ = true;                     // flush pipeline
+   ```
+
+3. **MemoryPort: expose fault info** — add `get_fault_addr()` and `get_fault_type()`
+   methods (MMU already records this internally)
+
+4. **Handler (assembly or Python-encoded):**
+   ```
+   trap_handler:
+     csrr  t0, mtval          # faulting virtual address
+     srli  t0, t0, 12         # page number
+     slli  t1, t0, 3          # sector = page * 8 (8 sectors per 4KB page)
+     # ... allocate frame, DMA 8 sectors, update page table, sfence.vma ...
+     mret                     # retry faulting instruction
+   ```
+
+### 15.6 Demand Paging Flow (OS Perspective)
+
+```
+Boot:
+  1. Load OS kernel to RAM, set up root page table
+  2. Mark all user pages as INVALID in page table
+  3. Store user program pages on disk (sector = page_number * 8)
+  4. Set mtvec = &page_fault_handler
+  5. Enable MMU (write SATP)
+  6. Jump to user code
+
+Runtime:
+  User code accesses virtual page 5
+  -> MMU: page 5 not valid -> exception
+  -> Handler:
+       frame = next_free_frame++
+       DMA read sectors 40..47 into frame     (page 5 * 8 sectors)
+       page_table[5] = frame | VALID|R|W
+       flush TLB
+       mret
+  -> CPU retries load -> succeeds
+```
+
+### 15.7 What Already Exists
+
+- MMU sets `faulted_` flag and records fault address/type (mmu.h)
+- MemoryPort exposes `has_fault()` (memory.h)
+- Disk DMA is wired: CPU can read sectors into RAM via I/O registers (block_device.h)
+- Interrupt/trap mechanism: mepc/mtvec/mcause/MRET all work (cpu_base.h)
+- TLB flush available via `mmu_flush_tlb()` or SATP write
+
+### 15.8 What Needs To Be Built
+
+- Change CPU fault path from halt to trap (~10 lines)
+- Add CSR_MTVAL and expose fault address from MemoryPort
+- Demo: set up page table with invalid pages, load from disk on fault

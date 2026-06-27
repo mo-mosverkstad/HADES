@@ -194,6 +194,36 @@ public:
         interrupt_taken_ = true;         // signal pipeline to flush
     }
 
+    /**
+     * Checks if a memory port faulted, and if so takes the exception.
+     * Returns true if a fault was handled (caller should abort the instruction).
+     */
+    bool handle_fault(MemoryPort& port) {
+        if (!port.has_fault()) return false;
+        if (!take_exception(port.get_fault_type(), port.get_fault_addr()))
+            halted_ = true;
+        port.clear_fault();
+        return true;
+    }
+
+    /**
+     * Takes a synchronous exception (page fault). Saves faulting PC to mepc,
+     * sets mcause (no interrupt bit), stores faulting address in mtval.
+     * Returns true if trap was taken, false if no handler (halts instead).
+     */
+    bool take_exception(uint32_t cause, uint32_t tval) {
+        uint32_t mtvec = csr_read(CSR_MTVEC);
+        if (mtvec == 0) return false;  // no handler installed
+
+        csr_write(CSR_MEPC, pc_);      // retry this instruction on MRET
+        csr_write(CSR_MCAUSE, cause);  // exception code (bit 31 = 0)
+        csr_write(CSR_MTVAL, tval);    // faulting address
+        interrupts_enabled_ = false;
+        pc_ = mtvec;
+        interrupt_taken_ = true;       // signal pipeline to flush
+        return true;
+    }
+
 protected:
     uint32_t regs_[32]{};
     uint32_t pc_ = 0x1000;
@@ -219,14 +249,14 @@ protected:
         if (rd != 0) regs_[rd] = value;
     }
 
-    /** DMA read callback: reads a byte from CPU data memory port. */
+    /** DMA read callback: reads a byte directly from physical memory (bypasses MMU). */
     static uint8_t dma_read(void* ctx, uint32_t addr) {
-        return static_cast<CPUBase*>(ctx)->mem_.dmem().read_byte(addr);
+        return static_cast<CPUBase*>(ctx)->mem_.hierarchy().read_byte(addr);
     }
 
-    /** DMA write callback: writes a byte to CPU data memory port. */
+    /** DMA write callback: writes a byte directly to physical memory (bypasses MMU). */
     static void dma_write(void* ctx, uint32_t addr, uint8_t val) {
-        static_cast<CPUBase*>(ctx)->mem_.dmem().write_byte(addr, val);
+        static_cast<CPUBase*>(ctx)->mem_.hierarchy().write_byte(addr, val);
     }
 
     /** Resets all CPU state, registers, memory, and re-registers I/O devices. */

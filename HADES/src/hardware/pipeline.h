@@ -64,5 +64,6 @@ enum CSR_Addr {
     CSR_MTVEC       = 0x305,   // trap vector base address
     CSR_MEPC        = 0x341,   // exception PC (saved on interrupt)
     CSR_MCAUSE      = 0x342,   // trap cause code
+    CSR_MTVAL       = 0x343,   // trap value (faulting address)
     CSR_SATP        = 0x180,   // address translation (MMU page table base)
 };

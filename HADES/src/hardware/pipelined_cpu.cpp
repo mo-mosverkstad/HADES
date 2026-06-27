@@ -39,6 +39,8 @@ void PipelinedCPU::pipeline_cycle() {
     if (interrupt_taken_) {
         interrupt_taken_ = false;
         ifid_ = {};
+        ex_ = {};
+        return;
     }
     if (detect_load_use_hazard()) {
         perf_.stalls_data++;
@@ -50,6 +52,13 @@ void PipelinedCPU::pipeline_cycle() {
 
     stage_writeback();
     stage_memory();
+
+    if (interrupt_taken_) {
+        interrupt_taken_ = false;
+        ifid_ = {};
+        ex_ = {};
+        return;
+    }
 
     if (halted_) {
         ex_ = {};
@@ -94,7 +103,12 @@ void PipelinedCPU::stage_memory() {
             case 0b100: val = mem_.dmem().read_byte(addr); break;
             case 0b101: val = mem_.dmem().read_half(addr); break;
         }
-        if (mem_.dmem().has_fault()) { halted_ = true; return; }
+        if (mem_.dmem().has_fault()) {
+            pc_ = ex_.pc;  // mepc must point to the faulting instruction
+            handle_fault(mem_.dmem());
+            memwb_ = {};
+            return;
+        }
         perf_.mcycle += mem_.dmem().drain_penalty();
         memwb_.result = val;
     } else if (ex_.is_store) {
@@ -106,7 +120,12 @@ void PipelinedCPU::stage_memory() {
             case 0b001: mem_.dmem().write_half(addr, ex_.rs2_val & 0xFFFF); break;
             case 0b010: mem_.dmem().write_word(addr, ex_.rs2_val); break;
         }
-        if (mem_.dmem().has_fault()) { halted_ = true; return; }
+        if (mem_.dmem().has_fault()) {
+            pc_ = ex_.pc;  // mepc must point to the faulting instruction
+            handle_fault(mem_.dmem());
+            memwb_ = {};
+            return;
+        }
         mem_.dmem().drain_penalty();
 
         memwb_.writes_rd = false;
@@ -193,7 +212,7 @@ void PipelinedCPU::stage_fetch_decode() {
     if (ex_.is_branch && ex_.branch_taken) return;
 
     ifid_.instr = mem_.imem().read_word(pc_);
-    if (mem_.imem().has_fault()) { halted_ = true; return; }
+    if (handle_fault(mem_.imem())) return;
     perf_.mcycle += mem_.imem().drain_penalty();
 
     ifid_.pc = pc_;

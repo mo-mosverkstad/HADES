@@ -139,6 +139,8 @@ public:
     // Check if last access caused a page fault
     bool has_fault() const { return faulted_; }
     void clear_fault() { faulted_ = false; }
+    uint32_t get_fault_type() const { return mmu_.get_last_fault(); }
+    uint32_t get_fault_addr() const { return mmu_.get_last_fault_addr(); }
 
     // Configuration (called by Memory composite, not by CPU)
     void set_cache_enabled(bool enabled) { cache_enabled_ = enabled; }
@@ -219,6 +221,7 @@ public:
     MemoryPort& dmem() { return dmem_; }
     const MemoryPort& imem() const { return imem_; }
     const MemoryPort& dmem() const { return dmem_; }
+    MemHierarchy& hierarchy() { return hierarchy_; }
 
     // ─── Global configuration ───────────────────────────────────────────
 

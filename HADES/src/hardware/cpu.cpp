@@ -10,7 +10,7 @@ void CPU::reset() {
 void CPU::step() {
     if (halted_) return;
     uint32_t instr = mem_.imem().read_word(pc_);
-    if (mem_.imem().has_fault()) { halted_ = true; return; }
+    if (handle_fault(mem_.imem())) return;
     perf_.mcycle += mem_.imem().drain_penalty();
     execute(instr);
     if (io_enabled_) io_bus_.tick_all();
@@ -86,7 +86,7 @@ void CPU::execute(uint32_t instr) {
             case 0b100: val = mem_.dmem().read_byte(addr); break;
             case 0b101: val = mem_.dmem().read_half(addr); break;
         }
-        if (mem_.dmem().has_fault()) { halted_ = true; break; }
+        if (handle_fault(mem_.dmem())) break;
         perf_.mcycle += mem_.dmem().drain_penalty();
         write_reg(d.rd, val);
         pc_ += 4;
@@ -100,7 +100,7 @@ void CPU::execute(uint32_t instr) {
             case 0b001: mem_.dmem().write_half(addr, regs_[d.rs2] & 0xFFFF); break;
             case 0b010: mem_.dmem().write_word(addr, regs_[d.rs2]); break;
         }
-        if (mem_.dmem().has_fault()) { halted_ = true; break; }
+        if (handle_fault(mem_.dmem())) break;
         mem_.dmem().drain_penalty();
         pc_ += 4;
         break;

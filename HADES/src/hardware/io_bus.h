@@ -39,9 +39,9 @@ public:
         devices_.push_back({base_addr, dev});
     }
 
-    /** Returns true if addr falls in the I/O region (>= 0xF000). */
+    /** Returns true if addr falls in the I/O region (0xF000-0xFFFF). */
     bool is_io_address(uint32_t addr) const {
-        return addr >= IO_BASE;
+        return addr >= IO_BASE && addr <= 0xFFFF;
     }
 
     /** Reads from the device mapped at addr. Returns 0 if unmapped. */
