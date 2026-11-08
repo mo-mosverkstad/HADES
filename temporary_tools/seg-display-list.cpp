@@ -1,22 +1,3 @@
-// =============================================================================
-//  seg-display-list.cpp
-//
-//  Prints ASCII 32..127 on a SIXTEEN-segment display, drawn as ASCII art.
-//  No decimal points, no colon dots: the 16 segments fill the 16 bits of one
-//  seg16_display_val exactly, so a character is 2 bytes and nothing is wasted.
-//
-//  The table is traced from the reference image "16-seg.png" in this folder:
-//  the picture holds 96 cells (16 columns x 6 rows = ASCII 32..127) and every
-//  cell was sampled segment by segment, so seg_font below is that picture.
-//  91 of the 96 entries are a literal copy of it; the five that are not are
-//  marked "off-image" and explained above the table.
-//
-//  Every one of the 96 patterns is distinct, so the mapping back from a 2-byte
-//  value to an ASCII code is unambiguous.
-//
-//  Segment geometry.  The outer frame runs clockwise from the top-left, then
-//  the inner star; A and D are split in half, which is what a 16-segment unit
-//  adds over a 14-segment one:
 //
 //          -a1-- --a2-            h : top-left     -> centre
 //         | \    |    / |         i : top-centre   -> centre
@@ -28,9 +9,7 @@
 //         | /    |    \ |
 //          -d1-- --d2-
 //
-//  Build:
-//      g++ -std=c++17 -O2 -Wall -o seg-display-list seg-display-list.cpp
-// =============================================================================
+//  Build: g++ -std=c++17 -O2 -Wall -o seg-display-list seg-display-list.cpp
 
 #include <array>
 #include <cstdint>
@@ -39,13 +18,6 @@
 
 namespace seg {
 
-// -----------------------------------------------------------------------------
-// One lit segment.  Outer frame clockwise, then the inner star.
-//
-// Unscoped on purpose: the font table reads as "a1 | a2 | f | g1" rather than
-// carrying a type name on every one of its ~500 terms.  The fixed underlying
-// type pins each value to the 16 bits of a glyph.
-// -----------------------------------------------------------------------------
 enum segment : std::uint16_t {
     a1 = 1u << 0,   // top bar, left half
     a2 = 1u << 1,   // top bar, right half
@@ -65,14 +37,6 @@ enum segment : std::uint16_t {
     m  = 1u << 15,  // diagonal centre -> bottom-left
 };
 
-// -----------------------------------------------------------------------------
-// A whole glyph: the 16 segment bits collected into one 2-byte value.
-//
-// This is a type of its own, not an alias for std::uint16_t, so a glyph pattern
-// can never be mixed up with an ASCII code or any other 16-bit number.  Lit
-// segments only go in through operator|, and the raw bits only come out through
-// raw().
-// -----------------------------------------------------------------------------
 class seg16_display_val {
 public:
     constexpr seg16_display_val() = default;
@@ -108,25 +72,10 @@ constexpr seg16_display_val no_segments{};
 constexpr seg16_display_val all_segments =
     a1 | a2 | b | c | d2 | d1 | e | f | g1 | g2 | h | i | j | k | l | m;
 
-// ASCII codes are 8-bit quantities, so they are carried as std::uint8_t rather
-// than int: the range is stated by the type instead of only by a comment.
 constexpr std::uint8_t first_code  = 32;
 constexpr std::uint8_t last_code   = 127;
 constexpr std::uint8_t glyph_count = last_code - first_code + 1;  // 96
 
-// -----------------------------------------------------------------------------
-// The font, traced from 16-seg.png.
-//
-// Five entries cannot be copied from the picture, because the picture leans on
-// the decimal point we no longer have, or because the picture itself draws two
-// characters identically:
-//
-//   '!'  image = b|c plus the decimal point  -> upper stem i plus the d2 mark
-//   '.'  image = decimal point only          -> d2, where the dot used to sit
-//   '|'  image = i|l, same glyph as ':'      -> b|c, the old '!' body
-//   'x'  image = h|j|k|m, same glyph as 'X'  -> adds the middle bar
-//   DEL  image = blank, same glyph as ' '    -> all segments, as a filler block
-// -----------------------------------------------------------------------------
 constexpr seg16_display_val seg_font[glyph_count] = {
     /*  32 ' '  */ no_segments,
     /*  33 '!'  */ i | d2,                                       // off-image
@@ -233,9 +182,7 @@ constexpr seg16_display_val pattern_of(std::uint8_t code) {
 
 }  // namespace seg
 
-// =============================================================================
-//  Draws seg16_display_val patterns as ASCII art, a row of glyphs at a time.
-// =============================================================================
+
 class seg16_ascii_printer {
 public:
     explicit seg16_ascii_printer(std::uint8_t glyphs_per_row = 8)
@@ -315,14 +262,6 @@ private:
         return rows;
     }
 
-    // The centre cell is shared by g1, g2, i, l and the four diagonals.  Pick
-    // the character that best describes whatever passes through it.
-    //
-    // On real hardware the exact centre is dark: all eight inner segments stop
-    // short of it.  Drawing that dead zone would chop every middle bar in half,
-    // which reads far worse in seven columns than it looks on glass, so the gap
-    // is only kept for the one case where it carries meaning: i and l alone,
-    // which is how ':' tells itself apart from a plain stem.
     static char centre_cell(seg::seg16_display_val glyph) {
         const bool horizontal = glyph.contains(seg::g1) || glyph.contains(seg::g2);
         const bool vertical   = glyph.contains(seg::i) || glyph.contains(seg::l);
